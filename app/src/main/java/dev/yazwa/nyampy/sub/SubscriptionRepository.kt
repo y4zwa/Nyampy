@@ -19,7 +19,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.ConcurrentHashMap
-import dev.yazwa.nyampy.db.ChumpyDatabase
+import dev.yazwa.nyampy.db.NyampyDatabase
 import dev.yazwa.nyampy.db.ProfileEntity
 import dev.yazwa.nyampy.db.ProfileType
 import dev.yazwa.nyampy.db.SubscriptionEntity
@@ -40,7 +40,7 @@ import java.util.concurrent.TimeUnit
  */
 class SubscriptionRepository(
     context: Context,
-    private val db: ChumpyDatabase,
+    private val db: NyampyDatabase,
     private val tunnelUp: () -> Boolean,
     private val happSpoof: () -> HappSpoof.Fingerprint?,
     private val localProxy: () -> LocalProxy? = { null },
@@ -48,7 +48,7 @@ class SubscriptionRepository(
     private val context: Application = context.applicationContext as Application
 
     private companion object {
-        const val TAG = "Chumpy/SubRepo"
+        const val TAG = "Nyampy/SubRepo"
         const val DEFAULT_UPDATE_HOURS = 24L
         const val MIN_UPDATE_HOURS = 1L
         const val MAX_UPDATE_HOURS = 24L * 14

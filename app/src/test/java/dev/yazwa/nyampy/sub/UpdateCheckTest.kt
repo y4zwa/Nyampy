@@ -22,13 +22,13 @@ class UpdateCheckTest {
         {
           "tag_name": "v0.6.221",
           "assets": [
-            {"name": "Chumpy-0.6.221-miho-debug-arm64-v8a.apk", "size": 10,
+            {"name": "Nyampy-0.6.221-miho-debug-arm64-v8a.apk", "size": 10,
              "browser_download_url": "debug"},
-            {"name": "Chumpy-0.6.221-miho-release-arm64-v8a.apk", "size": 15597610,
+            {"name": "Nyampy-0.6.221-miho-release-arm64-v8a.apk", "size": 15597610,
              "browser_download_url": "https://example/arm64.apk"},
-            {"name": "Chumpy-0.6.221-miho-release-armeabi-v7a.apk", "size": 16,
+            {"name": "Nyampy-0.6.221-miho-release-armeabi-v7a.apk", "size": 16,
              "browser_download_url": "https://example/v7a.apk"},
-            {"name": "Chumpy-0.6.221-miho-release-universal.apk", "size": 52,
+            {"name": "Nyampy-0.6.221-miho-release-universal.apk", "size": 52,
              "browser_download_url": "https://example/universal.apk"}
           ]
         }
@@ -75,7 +75,7 @@ class UpdateCheckTest {
     fun `a release without anything this device installs answers nothing`() {
         assertNull(UpdateCheck.parseLatest("""{"tag_name":"v0.7.0","assets":[]}""", listOf("arm64-v8a")))
         assertNull(UpdateCheck.parseLatest("""{"tag_name":"v0.7.0"}""", listOf("arm64-v8a")))
-        assertNull(UpdateCheck.parseLatest("""{"assets":[{"name":"Chumpy-x-release-arm64-v8a.apk"}]}""", listOf("arm64-v8a")))
+        assertNull(UpdateCheck.parseLatest("""{"assets":[{"name":"Nyampy-x-release-arm64-v8a.apk"}]}""", listOf("arm64-v8a")))
         // And a tag that is not a version cannot outrank anything.
         assertNull(UpdateCheck.parseLatest("""{"tag_name":"milestone-3","assets":[]}""", listOf("arm64-v8a")))
     }

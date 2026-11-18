@@ -47,7 +47,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
-import dev.yazwa.nyampy.ChumpyApp
+import dev.yazwa.nyampy.NyampyApp
 import dev.yazwa.nyampy.Graph
 import dev.yazwa.nyampy.R
 import dev.yazwa.nyampy.core.CoreConfigFile
@@ -187,7 +187,7 @@ data class StatsUiState(
  */
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val app get() = getApplication<Application>()
-    private val tunnelClient = ChumpyApp.tunnelClient
+    private val tunnelClient = NyampyApp.tunnelClient
     private val repository: SubscriptionRepository = Graph.subscriptions
 
     /** UI preferences; every change is persisted immediately. */
@@ -247,7 +247,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (failure: Exception) {
-            Log.w("Chumpy/Update", "Update check failed", failure)
+            Log.w("Nyampy/Update", "Update check failed", failure)
             null
         } ?: return
         if (release.version <= UpdateCheck.currentVersion()) {
@@ -397,7 +397,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (failure: Exception) {
-                Log.w("Chumpy/Update", "Update download failed", failure)
+                Log.w("Nyampy/Update", "Update download failed", failure)
                 _update.update { it.copy(downloading = false, downloadPercent = 0) }
                 UpdateNotifier.cancel(app)
             }
@@ -422,7 +422,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         else Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, "package:${app.packageName}".toUri())
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         runCatching { app.startActivity(target) }
-            .onFailure { Log.w("Chumpy/Update", "Install request failed", it) }
+            .onFailure { Log.w("Nyampy/Update", "Install request failed", it) }
     }
 
     /** Whether nothing exists yet — the ask rides only the very first config's landing. */
@@ -681,7 +681,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      */
     private fun reparseAfterUpgrade() {
         viewModelScope.launch(Dispatchers.IO) {
-            val prefs = app.getSharedPreferences("chumpy_upgrade", android.content.Context.MODE_PRIVATE)
+            val prefs = app.getSharedPreferences("nyampy_upgrade", android.content.Context.MODE_PRIVATE)
+            // Carry the old marker over once: a renamed preference must not re-fetch every
+            // subscription on the first launch after the rename.
+            if (!prefs.contains("version_code")) {
+                val legacy = app.getSharedPreferences("chumpy_upgrade", android.content.Context.MODE_PRIVATE)
+                val carried = legacy.getLong("version_code", 0L)
+                if (carried > 0L) prefs.edit { putLong("version_code", carried) }
+            }
             val versionCode = runCatching {
                 val info = app.packageManager.getPackageInfo(app.packageName, 0)
                 if (Build.VERSION.SDK_INT >= 28) info.longVersionCode else {
@@ -1061,7 +1068,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 try {
                     connectivity.requestNetwork(request, callback)
                 } catch (e: RuntimeException) {
-                    Log.w("Chumpy/Ping", "Cannot watch the underlying network", e)
+                    Log.w("Nyampy/Ping", "Cannot watch the underlying network", e)
                     close()
                     return@callbackFlow
                 }

@@ -145,7 +145,7 @@
     <string name="settings_flag_system">System emoji</string>
     <string name="settings_flag_globe">Just globe</string>
     <string name="settings_app_icon">App icon</string>
-    <string name="settings_icon_chumpy" translatable="false">Nyampy</string>
+    <string name="settings_icon_nyampy" translatable="false">Nyampy</string>
     <string name="settings_icon_inverted">Inverted</string>
     <string name="settings_icon_dark">Dark</string>
     <string name="settings_icon_themed">Themed</string>

@@ -15,7 +15,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * UI-process side of the AIDL link to [ChumpyVpnService]. Connect and disconnect travel as
+ * UI-process side of the AIDL link to [NyampyVpnService]. Connect and disconnect travel as
  * service commands (the VPN must be started, not merely bound); the binder carries status
  * callbacks, traffic counters and delay measurements.
  */
@@ -55,7 +55,7 @@ class TunnelClient(context: Context) {
     fun bind() {
         if (bound) return
         bound = context.bindService(
-            Intent(context, ChumpyVpnService::class.java),
+            Intent(context, NyampyVpnService::class.java),
             connection,
             Context.BIND_AUTO_CREATE,
         )
@@ -73,9 +73,9 @@ class TunnelClient(context: Context) {
      * Connect (or reload, if already up) using the config the caller just wrote with
      * [CoreConfigFile]. The caller must hold the VPN consent already.
      */
-    fun connect() = ChumpyVpnService.startConnect(context)
+    fun connect() = NyampyVpnService.startConnect(context)
 
-    fun disconnect() = ChumpyVpnService.startDisconnect(context)
+    fun disconnect() = NyampyVpnService.startDisconnect(context)
 
     /** Wall-clock millis of the last transition to UP, or null while not bound. */
     fun connectedAtMillis(): Long? {

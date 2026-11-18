@@ -56,7 +56,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import dev.yazwa.nyampy.R
 import dev.yazwa.nyampy.data.SettingsStore
 import dev.yazwa.nyampy.ui.components.ActionTile
-import dev.yazwa.nyampy.ui.theme.ChumpyTheme
+import dev.yazwa.nyampy.ui.theme.NyampyTheme
 
 /**
  * The camera half of the import: a full-screen viewfinder that reads one QR code and
@@ -94,7 +94,7 @@ class ScannerActivity : ControllerActivity() {
     private fun startScanning() {
         setContent {
             val ui by SettingsStore.settings(this).collectAsStateWithLifecycle()
-            ChumpyTheme(settings = ui) {
+            NyampyTheme(settings = ui) {
                 ScannerScreen(
                     onClose = { finish() },
                     onResult = ::report,
@@ -171,7 +171,7 @@ private fun ScannerScreen(
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled
         } catch (failure: Exception) {
-            android.util.Log.w("Chumpy/Scanner", "Camera preview unavailable", failure)
+            android.util.Log.w("Nyampy/Scanner", "Camera preview unavailable", failure)
         }
     }
 

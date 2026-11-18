@@ -99,7 +99,7 @@ object WallpaperRegistry {
     private const val WALLPAPER_FILE = "wallpaper"
 
     /** Logcat tag for the import's diagnostics: the swallowed failures live here. */
-    private const val TAG = "Chumpy/Wallpaper"
+    private const val TAG = "Nyampy/Wallpaper"
 
     private val IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png", "webp", "bmp", "heic", "heif", "gif")
 

@@ -10,7 +10,7 @@ import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.yazwa.nyampy.data.SettingsStore
 import dev.yazwa.nyampy.data.WallpaperRegistry
-import dev.yazwa.nyampy.ui.theme.ChumpyTheme
+import dev.yazwa.nyampy.ui.theme.NyampyTheme
 
 /**
  * The wallpaper settings, a deep-dive screen in the fonts' footsteps rather than a navbar
@@ -25,7 +25,7 @@ class WallpaperActivity : ControllerActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             val settings by SettingsStore.settings(this).collectAsStateWithLifecycle()
-            ChumpyTheme(settings = settings) {
+            NyampyTheme(settings = settings) {
                 Surface(color = MaterialTheme.colorScheme.surface) {
                     WallpaperScreen(
                         settings = settings,

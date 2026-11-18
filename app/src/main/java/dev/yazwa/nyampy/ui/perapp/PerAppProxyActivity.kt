@@ -94,7 +94,7 @@ import dev.yazwa.nyampy.ui.main.SubScreenBottomBar
 import dev.yazwa.nyampy.ui.main.recordBehindBar
 import dev.yazwa.nyampy.ui.main.rememberContentUnderBar
 import dev.yazwa.nyampy.ui.main.screenPadding
-import dev.yazwa.nyampy.ui.theme.ChumpyTheme
+import dev.yazwa.nyampy.ui.theme.NyampyTheme
 import dev.yazwa.nyampy.ui.theme.LocalDarkTheme
 import dev.yazwa.nyampy.ui.wallpapers.LocalBarCoverage
 import dev.yazwa.nyampy.ui.wallpapers.LocalBarUnderlay
@@ -115,7 +115,7 @@ class PerAppProxyActivity : ControllerActivity() {
         setContent {
             val ui by SettingsStore.settings(this).collectAsStateWithLifecycle()
             val connection by ConnectionStore.settings(this).collectAsStateWithLifecycle()
-            ChumpyTheme(settings = ui) {
+            NyampyTheme(settings = ui) {
                 // The window's own bars answer to the theme, as in the main shell — there
                 // is no wallpaper here for them to hang on instead.
                 SystemBarsIconsDark(dark = LocalDarkTheme.current)

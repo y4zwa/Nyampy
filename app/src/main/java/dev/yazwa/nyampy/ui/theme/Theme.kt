@@ -42,7 +42,7 @@ import java.io.File
 
 /**
  * The app's UI settings, exposed app-wide so any control can honor them — the haptic gate
- * and the slow-motion factor live outside the settings screen. Provided by [ChumpyTheme];
+ * and the slow-motion factor live outside the settings screen. Provided by [NyampyTheme];
  * changes re-compose everything beneath, which a theme change does anyway.
  */
 val LocalUiSettings = staticCompositionLocalOf { UiSettings() }
@@ -55,7 +55,7 @@ val LocalUiSettings = staticCompositionLocalOf { UiSettings() }
 val LocalDarkTheme = staticCompositionLocalOf { false }
 
 @Composable
-fun ChumpyTheme(
+fun NyampyTheme(
     settings: UiSettings,
     content: @Composable () -> Unit,
 ) {
@@ -104,7 +104,7 @@ fun backdropScheme(darkTheme: Boolean): ColorScheme {
     return themeColorScheme(settings, monetHues, LocalRainbowHue.current, darkTheme, context)
 }
 
-/** The rainbow accent's current hue, provided by [ChumpyTheme] for [backdropScheme]. */
+/** The rainbow accent's current hue, provided by [NyampyTheme] for [backdropScheme]. */
 private val LocalRainbowHue = staticCompositionLocalOf { 0f }
 
 /** One full trip of the rainbow accent around the color wheel. */

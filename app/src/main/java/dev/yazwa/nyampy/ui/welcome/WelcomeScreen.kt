@@ -62,7 +62,7 @@ import dev.yazwa.nyampy.ui.components.ActionTile
 import dev.yazwa.nyampy.ui.components.InfoChip
 import dev.yazwa.nyampy.ui.main.isSmallScreen
 import dev.yazwa.nyampy.ui.scan.ScannerActivity
-import dev.yazwa.nyampy.ui.theme.ChumpyTheme
+import dev.yazwa.nyampy.ui.theme.NyampyTheme
 
 /**
  * The first-run screen, in the home layout's own clothes: the app's mark and the waving
@@ -169,7 +169,7 @@ fun WelcomeScreen(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Icon(
-                            painter = painterResource(R.drawable.ic_chumpy_mark),
+                            painter = painterResource(R.drawable.ic_nyampy_mark),
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(56.dp),
@@ -354,7 +354,7 @@ private fun WavingHand(modifier: Modifier = Modifier) {
 @Preview(showBackground = true)
 @Composable
 private fun WelcomeScreenPreview() {
-    ChumpyTheme(settings = UiSettings(accent = Accent.VIOLET)) {
+    NyampyTheme(settings = UiSettings(accent = Accent.VIOLET)) {
         WelcomeScreen(
             onAddSubscription = { _, _, onDone -> onDone(null) },
             onImport = { _, onDone -> onDone(null) },

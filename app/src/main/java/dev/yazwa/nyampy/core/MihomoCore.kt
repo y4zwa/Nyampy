@@ -20,11 +20,11 @@ import dev.yazwa.nyampy.mihomo.ClashConfig
  * the ":core" process, which stays alive while the VPN is up, independently of the UI.
  *
  * mihomo keeps its state in the process, not in a controller object: configure once, attach
- * the TUN handed over by [ChumpyVpnService], then read the counters. Every call that touches
+ * the TUN handed over by [NyampyVpnService], then read the counters. Every call that touches
  * the core runs on one worker thread, the same discipline the Xray controller had.
  */
 object MihomoCore {
-    private const val TAG = "Chumpy/MihomoCore"
+    private const val TAG = "Nyampy/MihomoCore"
 
     /** Where the geo databases and the generated config live. */
     private const val WORK_DIR = "mihomo"

@@ -111,5 +111,5 @@ object WallpaperPalette {
     private const val SEEDS = 3
 
     /** Logcat tag for the palette's diagnostics. */
-    private const val TAG = "Chumpy/Palette"
+    private const val TAG = "Nyampy/Palette"
 }

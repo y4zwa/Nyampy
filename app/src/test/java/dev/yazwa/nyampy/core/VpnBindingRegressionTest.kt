@@ -15,7 +15,7 @@ import org.robolectric.annotation.Config
 class VpnBindingRegressionTest {
     @Test
     fun `system VPN binding retains the framework revocation interface`() {
-        val service = ChumpyVpnService()
+        val service = NyampyVpnService()
         val systemBinder = service.onBind(Intent(VpnService.SERVICE_INTERFACE))
         val uiBinder = service.onBind(Intent())
         assertNotNull(systemBinder)

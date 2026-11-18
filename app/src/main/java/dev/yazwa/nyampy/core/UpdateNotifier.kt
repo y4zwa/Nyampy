@@ -52,7 +52,7 @@ object UpdateRequests {
  * always asks for the install — or, while the download runs, holds it at a pause.
  */
 object UpdateNotifier {
-    private const val CHANNEL_ID = "chumpy-updates"
+    private const val CHANNEL_ID = "nyampy-updates"
 
     /** The VPN service holds 1 and the tunnel alerts 2; the update takes its own slot. */
     private const val NOTIFICATION_ID = 3

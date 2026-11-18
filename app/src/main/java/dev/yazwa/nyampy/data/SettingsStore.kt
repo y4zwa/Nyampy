@@ -29,12 +29,12 @@ enum class ThemeMode {
 enum class FlagStyle { TWEMOJI, SYSTEM, GLOBE }
 
 /**
- * The launcher icon variant. CHUMPY is the flat sky-colored art on white; INVERTED swaps
+ * The launcher icon variant. NYAMPY is the flat sky-colored art on white; INVERTED swaps
  * the two; DARK is the white art on a near-black #191919; THEMED is the neutral art the
  * system's themed icons (Android 13+) dress in the monet palette — and that the app itself
  * colors from its own accent everywhere it draws (the QS tile, the picker's preview).
  */
-enum class IconVariant { CHUMPY, INVERTED, THEMED, DARK }
+enum class IconVariant { NYAMPY, INVERTED, THEMED, DARK }
 
 /**
  * The interface accent. ADAPTIVE follows the wallpaper (Material You, Android 12+); the rest
@@ -140,7 +140,7 @@ data class UiSettings(
     /** How the server list draws each exit's country. */
     val flagStyle: FlagStyle = FlagStyle.TWEMOJI,
     /** The launcher icon variant; see [IconVariant]. */
-    val iconVariant: IconVariant = IconVariant.CHUMPY,
+    val iconVariant: IconVariant = IconVariant.NYAMPY,
     /** The CUSTOM accent's own color, as an ARGB int (alpha always opaque). */
     val customAccent: Int = 0xFF6FACED.toInt(),
     /** How strongly the scrim dims the wallpaper on Home, 0 (none) to 1 (fully dark). */
@@ -252,7 +252,7 @@ object SettingsStore {
             var latest = update
             while (true) latest = tileUpdates.tryReceive().getOrNull() ?: break
             runCatching { writeTileSnapshot(latest.first, latest.second) }
-                .onFailure { android.util.Log.w("Chumpy/Settings", "Could not publish tile settings", it) }
+                .onFailure { android.util.Log.w("Nyampy/Settings", "Could not publish tile settings", it) }
         }
     }
 
@@ -268,7 +268,7 @@ object SettingsStore {
         val json = JSONObject(AtomicSnapshot.read(File(context.filesDir, TILE_SETTINGS_FILE))
             ?: error("No published tile settings"))
         UiSettings(
-            iconVariant = enumEntry(json.optString(KEY_ICON_VARIANT), IconVariant.CHUMPY),
+            iconVariant = enumEntry(json.optString(KEY_ICON_VARIANT), IconVariant.NYAMPY),
             accent = enumEntry(json.optString(KEY_ACCENT), Accent.ADAPTIVE),
             customAccent = json.optInt(KEY_CUSTOM_ACCENT, 0xFF6FACED.toInt()),
             maskAddresses = json.optBoolean(KEY_MASK_ADDRESSES, false),
@@ -325,7 +325,7 @@ object SettingsStore {
                 .ifBlank { HappSpoof.randomHwid() },
             fontId = prefs.getString(KEY_FONT, null) ?: FontRegistry.INTER_ID,
             flagStyle = enumEntry(prefs.getString(KEY_FLAG_STYLE, null), FlagStyle.TWEMOJI),
-            iconVariant = enumEntry(prefs.getString(KEY_ICON_VARIANT, null), IconVariant.CHUMPY),
+            iconVariant = enumEntry(prefs.getString(KEY_ICON_VARIANT, null), IconVariant.NYAMPY),
             customAccent = prefs.getInt(KEY_CUSTOM_ACCENT, 0xFF6FACED.toInt()),
             wallpaperDim = prefs.getFloat(KEY_WALLPAPER_DIM, 0.4f),
             wallpaperDimScreens = prefs.getFloat(KEY_WALLPAPER_DIM_SCREENS, 0.5f),

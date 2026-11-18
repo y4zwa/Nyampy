@@ -219,7 +219,7 @@ fun WallpaperScreen(
         // fresh picture's look preset rode along with it — the two symptoms a failed import
         // shows as one.
         android.util.Log.i(
-            "Chumpy/Wallpaper",
+            "Nyampy/Wallpaper",
             if (importError == null) "Import OK, look preset applied" else "Import failed ($importError), preset skipped",
         )
         return importError
@@ -229,7 +229,7 @@ fun WallpaperScreen(
         // A null result is the user's own cancel — or the platform dropping the granted URI
         // on the handback (seen on some OEM builds); the two are indistinguishable from the
         // outside, so the line exists to tell a no-op from a failure in the log.
-        else android.util.Log.i("Chumpy/Wallpaper", "Photo picker returned no image — cancel or stripped URI")
+        else android.util.Log.i("Nyampy/Wallpaper", "Photo picker returned no image — cancel or stripped URI")
     }
     // Decoding happens off the main thread; a camera shot can be tens of megapixels.
     val lifecycleState by LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()

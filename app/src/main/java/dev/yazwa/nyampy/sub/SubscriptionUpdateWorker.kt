@@ -45,7 +45,7 @@ class SubscriptionUpdateWorker(
             onSuccess = { Result.success() },
             onFailure = { Result.retry() },
         ).also {
-            Log.d("Chumpy/SubWorker", "Refresh of $id -> $it")
+            Log.d("Nyampy/SubWorker", "Refresh of $id -> $it")
         }
     }
 }

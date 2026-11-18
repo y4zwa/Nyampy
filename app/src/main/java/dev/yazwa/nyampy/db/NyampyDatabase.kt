@@ -95,7 +95,7 @@ abstract class ProfileDao {
 
 /**
  * The profile store. Owned by the UI process only — the ":core" process never opens it; it
- * receives rendered Xray config JSON over the file hand-off in
+ * receives the rendered mihomo document over the file hand-off in
  * [dev.yazwa.nyampy.core.CoreConfigFile] instead.
  */
 @Database(
@@ -103,11 +103,12 @@ abstract class ProfileDao {
     version = 15,
     exportSchema = false,
 )
-abstract class ChumpyDatabase : RoomDatabase() {
+abstract class NyampyDatabase : RoomDatabase() {
     abstract fun subscriptionDao(): SubscriptionDao
     abstract fun profileDao(): ProfileDao
 
     companion object {
+        /** The legacy file name is kept: renaming it would lose the existing database. */
         const val NAME = "chumpy.db"
 
         /**
@@ -135,7 +136,7 @@ abstract class ChumpyDatabase : RoomDatabase() {
          */
         val MIGRATION_2_3 = object : Migration(2, 3) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("CREATE TEMP TABLE chumpy_profiles_backup AS SELECT * FROM profiles")
+                db.execSQL("CREATE TEMP TABLE nyampy_profiles_backup AS SELECT * FROM profiles")
                 db.execSQL("""
                     CREATE TABLE subscriptions_new (
                         id TEXT NOT NULL PRIMARY KEY, name TEXT NOT NULL, url TEXT NOT NULL,
@@ -154,8 +155,8 @@ abstract class ChumpyDatabase : RoomDatabase() {
                 """.trimIndent())
                 db.execSQL("DROP TABLE subscriptions")
                 db.execSQL("ALTER TABLE subscriptions_new RENAME TO subscriptions")
-                db.execSQL("INSERT OR IGNORE INTO profiles SELECT * FROM chumpy_profiles_backup")
-                db.execSQL("DROP TABLE chumpy_profiles_backup")
+                db.execSQL("INSERT OR IGNORE INTO profiles SELECT * FROM nyampy_profiles_backup")
+                db.execSQL("DROP TABLE nyampy_profiles_backup")
             }
         }
 

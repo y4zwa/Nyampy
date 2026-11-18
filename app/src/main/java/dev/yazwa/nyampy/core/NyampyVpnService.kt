@@ -69,14 +69,14 @@ import java.util.concurrent.atomic.AtomicInteger
  * the foreign VPN together with ours the moment our own interface dies — the interface
  * retires at the next connect instead, never on the fall.
  */
-class ChumpyVpnService : VpnService() {
+class NyampyVpnService : VpnService() {
     companion object {
-        private const val TAG = "Chumpy/VpnService"
+        private const val TAG = "Nyampy/VpnService"
         private const val CHANNEL_ID = "nyampy-core"
         private const val NOTIFICATION_ID = 1
 
         /** The interrupted-tunnel alert's own channel and slot — never the running one's. */
-        private const val ALERT_CHANNEL_ID = "chumpy-alerts"
+        private const val ALERT_CHANNEL_ID = "nyampy-alerts"
         private const val ALERT_NOTIFICATION_ID = 2
 
         /**
@@ -172,12 +172,12 @@ class ChumpyVpnService : VpnService() {
 
         fun startConnect(context: Context) {
             context.startForegroundService(
-                Intent(context, ChumpyVpnService::class.java).setAction(ACTION_CONNECT),
+                Intent(context, NyampyVpnService::class.java).setAction(ACTION_CONNECT),
             )
         }
 
         fun startDisconnect(context: Context) {
-            val intent = Intent(context, ChumpyVpnService::class.java).setAction(ACTION_DISCONNECT)
+            val intent = Intent(context, NyampyVpnService::class.java).setAction(ACTION_DISCONNECT)
             // The service is foreground while running, so a plain start is enough there; a
             // not-yet-started service answers DISCONNECT by stopping immediately.
             try {
@@ -199,11 +199,11 @@ class ChumpyVpnService : VpnService() {
     private val binder = object : ITunnelService.Stub() {
         override fun connect() {
             // Same path as the intent route: through onStartCommand, in one place.
-            startService(Intent(this@ChumpyVpnService, ChumpyVpnService::class.java).setAction(ACTION_CONNECT))
+            startService(Intent(this@NyampyVpnService, NyampyVpnService::class.java).setAction(ACTION_CONNECT))
         }
 
         override fun disconnect() {
-            startService(Intent(this@ChumpyVpnService, ChumpyVpnService::class.java).setAction(ACTION_DISCONNECT))
+            startService(Intent(this@NyampyVpnService, NyampyVpnService::class.java).setAction(ACTION_DISCONNECT))
         }
 
         override fun connectedAtMillis(): Long = MihomoCore.upSince()
@@ -823,7 +823,7 @@ class ChumpyVpnService : VpnService() {
         val profile = CoreConfigFile.readProfileName(this)?.let(::stripFlag)
             ?: getString(R.string.notif_profile_unknown)
         val subscription = CoreConfigFile.readSubscriptionName(this)
-        // The app's name and the state it is in share the title — "Chumpy • Connected" —
+        // The app's name and the state it is in share the title — "Nyampy • Connected" —
         // and the line under it tells the hop the home card does: the subscription, an
         // arrow, then the region — its flag emoji lifted off the way the list does. The
         // "→" renders crooked in the notification's system font; the "›" chevron — the
@@ -840,7 +840,7 @@ class ChumpyVpnService : VpnService() {
         val disconnect = PendingIntent.getService(
             this,
             1,
-            Intent(this, ChumpyVpnService::class.java).setAction(ACTION_DISCONNECT),
+            Intent(this, NyampyVpnService::class.java).setAction(ACTION_DISCONNECT),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         val builder = Notification.Builder(this, CHANNEL_ID)
@@ -902,13 +902,13 @@ class ChumpyVpnService : VpnService() {
         val reconnect = PendingIntent.getForegroundService(
             this,
             2,
-            Intent(this, ChumpyVpnService::class.java).setAction(ACTION_CONNECT),
+            Intent(this, NyampyVpnService::class.java).setAction(ACTION_CONNECT),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         val disconnectAnyway = PendingIntent.getForegroundService(
             this,
             3,
-            Intent(this, ChumpyVpnService::class.java).setAction(ACTION_DISCONNECT),
+            Intent(this, NyampyVpnService::class.java).setAction(ACTION_DISCONNECT),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         manager.notify(

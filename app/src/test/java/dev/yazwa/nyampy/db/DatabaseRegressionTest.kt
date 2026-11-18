@@ -19,11 +19,11 @@ import dev.yazwa.nyampy.sub.LinkUtils
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28], application = Application::class)
 class DatabaseRegressionTest {
-    private lateinit var db: ChumpyDatabase
+    private lateinit var db: NyampyDatabase
 
     @Before
     fun createDatabase() = runBlocking {
-        db = Room.inMemoryDatabaseBuilder(RuntimeEnvironment.getApplication(), ChumpyDatabase::class.java)
+        db = Room.inMemoryDatabaseBuilder(RuntimeEnvironment.getApplication(), NyampyDatabase::class.java)
             .allowMainThreadQueries().build()
         db.subscriptionDao().upsert(SubscriptionEntity(id = "sub", name = "Original"))
         db.profileDao().replaceProfiles("sub", listOf(
@@ -134,7 +134,7 @@ class DatabaseRegressionTest {
         sql.execSQL("ALTER TABLE subscriptions ADD COLUMN happHwid TEXT NOT NULL DEFAULT ''")
         sql.beginTransaction()
         try {
-            ChumpyDatabase.MIGRATION_2_3.migrate(sql)
+            NyampyDatabase.MIGRATION_2_3.migrate(sql)
             // The rebuild lands the table in its v3 shape; the pin came later (v8) and
             // the logo path later still (v11) — the same steps the real chain runs
             // next, restoring the shape the DAOs read. The profiles' own v8 step stays
@@ -142,7 +142,7 @@ class DatabaseRegressionTest {
             // backup carried it over.
             sql.execSQL("ALTER TABLE subscriptions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
             sql.execSQL("ALTER TABLE subscriptions ADD COLUMN logoPath TEXT")
-            ChumpyDatabase.MIGRATION_12_13.migrate(sql)
+            NyampyDatabase.MIGRATION_12_13.migrate(sql)
             sql.setTransactionSuccessful()
         } finally {
             sql.endTransaction()
@@ -161,7 +161,7 @@ class DatabaseRegressionTest {
 
     @Test fun `manual balancer refresh replaces members and removes orphan internals`() = runBlocking {
         val context = RuntimeEnvironment.getApplication()
-        val database = Room.inMemoryDatabaseBuilder(context, ChumpyDatabase::class.java).allowMainThreadQueries().build()
+        val database = Room.inMemoryDatabaseBuilder(context, NyampyDatabase::class.java).allowMainThreadQueries().build()
         try {
             val repository = SubscriptionRepository(context, database, { false }, { null })
             fun group(a: String, b: String) = """{"remarks":"Group","outbounds":[

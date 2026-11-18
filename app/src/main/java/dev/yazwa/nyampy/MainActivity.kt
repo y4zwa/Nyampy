@@ -1,8 +1,14 @@
 package dev.yazwa.nyampy
 
 import android.Manifest
+import android.app.StatusBarManager
+import android.content.ComponentName
 import android.content.Intent
+import android.graphics.drawable.Icon
+import android.os.Build
 import android.os.Bundle
+import androidx.core.content.edit
+import dev.yazwa.nyampy.core.QuickTileService
 import dev.yazwa.nyampy.ui.components.ControllerActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -33,7 +39,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.yazwa.nyampy.ui.MainViewModel
 import dev.yazwa.nyampy.ui.components.SystemBarsIconsDark
 import dev.yazwa.nyampy.ui.main.MainShell
-import dev.yazwa.nyampy.ui.theme.ChumpyTheme
+import dev.yazwa.nyampy.ui.theme.NyampyTheme
 import dev.yazwa.nyampy.ui.theme.LocalDarkTheme
 import dev.yazwa.nyampy.ui.welcome.WelcomeScreen
 
@@ -50,6 +56,7 @@ class MainActivity : ControllerActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        requestQuickTile()
         pendingSubscription = savedInstanceState?.getString("pending_subscription")
         if (savedInstanceState == null) receiveSubscription(intent)
         setContent {
@@ -70,7 +77,7 @@ class MainActivity : ControllerActivity() {
                     viewModel.consumeNotificationsAsk()
                 }
             }
-            ChumpyTheme(settings = settings) {
+            NyampyTheme(settings = settings) {
                 pendingSubscription?.let { url ->
                     AlertDialog(
                         onDismissRequest = { if (!importingSubscription) pendingSubscription = null },
@@ -178,6 +185,38 @@ class MainActivity : ControllerActivity() {
     override fun onSaveInstanceState(outState: Bundle) {
         if (!importingSubscription) outState.putString("pending_subscription", pendingSubscription)
         super.onSaveInstanceState(outState)
+    }
+
+    /**
+     * Android 13+ can put the tile in the shade without the user hunting through the
+     * editor. One ask per install: the result - added, already there, or declined - is
+     * remembered, so a "no" is never turned into a nag. Older releases have no such API;
+     * there the tile is added by hand from the editor.
+     */
+    private fun requestQuickTile() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        val prefs = getSharedPreferences("nyampy_qs_tile", MODE_PRIVATE)
+        if (prefs.getBoolean("requested", false)) return
+        val manager = getSystemService(StatusBarManager::class.java) ?: return
+        val component = ComponentName(this, QuickTileService::class.java)
+        val icon = Icon.createWithResource(this, R.drawable.ic_tile_off)
+        try {
+            manager.requestAddTileService(
+                component,
+                getString(R.string.app_name),
+                icon,
+                mainExecutor,
+            ) { result ->
+                when (result) {
+                    StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ADDED,
+                    StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ALREADY_ADDED,
+                    StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_NOT_ADDED,
+                    -> prefs.edit { putBoolean("requested", true) }
+                }
+            }
+        } catch (_: Exception) {
+            // OEMs without the API surface: the manual editor still has the tile.
+        }
     }
 
     private fun receiveSubscription(intent: Intent) {

@@ -42,7 +42,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import dev.yazwa.nyampy.ChumpyApp
+import dev.yazwa.nyampy.NyampyApp
 import dev.yazwa.nyampy.core.TunnelState
 import dev.yazwa.nyampy.data.DimTone
 import dev.yazwa.nyampy.data.WallpaperRegistry
@@ -308,7 +308,7 @@ internal fun WallpaperBackdrop(
 @Composable
 internal fun offlineDesaturation(): State<Float> {
     val settings = LocalUiSettings.current
-    val status by ChumpyApp.tunnelClient.status.collectAsStateWithLifecycle()
+    val status by NyampyApp.tunnelClient.status.collectAsStateWithLifecycle()
     return animateFloatAsState(
         targetValue = if (settings.grayscaleOffline && status.state != TunnelState.UP) 1f else 0f,
         animationSpec = MaterialTheme.motionScheme.defaultEffectsSpec(),
@@ -534,7 +534,7 @@ private const val MAX_GIF_SOURCE_PIXELS = 16_000_000L
 private const val LUMINANCE_GRID = 64
 
 /** Logcat tag for the decode's diagnostics: the null decodes live here. */
-private const val TAG = "Chumpy/Wallpaper"
+private const val TAG = "Nyampy/Wallpaper"
 
 /** Alpha below this reads as empty: a soft export edge or a compression ghost, not ink. */
 private const val TRIM_ALPHA = 16

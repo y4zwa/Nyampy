@@ -32,7 +32,7 @@ class PhoneImportServer internal constructor(
         const val MAX_IMAGE_BYTES = 40 * 1024 * 1024
 
         /** Logcat tag for the receiver's diagnostics: refused handshakes and accepted sizes. */
-        private const val TAG = "Chumpy/PhoneImport"
+        private const val TAG = "Nyampy/PhoneImport"
 
         private val active = java.util.concurrent.atomic.AtomicReference<PhoneImportServer?>(null)
 

@@ -5,7 +5,7 @@ import androidx.room.Room
 import dev.yazwa.nyampy.core.CoreConfigFile
 import dev.yazwa.nyampy.core.TunnelState
 import dev.yazwa.nyampy.data.SettingsStore
-import dev.yazwa.nyampy.db.ChumpyDatabase
+import dev.yazwa.nyampy.db.NyampyDatabase
 import dev.yazwa.nyampy.sub.HappSpoof
 import dev.yazwa.nyampy.sub.HappSpoof.happFingerprint
 import dev.yazwa.nyampy.sub.SubscriptionRepository
@@ -16,7 +16,7 @@ import dev.yazwa.nyampy.sub.SubscriptionRepository
  * rendered mihomo document through the file hand-off instead.
  */
 object Graph {
-    lateinit var database: ChumpyDatabase
+    lateinit var database: NyampyDatabase
         private set
 
     lateinit var subscriptions: SubscriptionRepository
@@ -27,23 +27,23 @@ object Graph {
         val application = context.applicationContext
         database = Room.databaseBuilder(
             application,
-            ChumpyDatabase::class.java,
-            ChumpyDatabase.NAME,
+            NyampyDatabase::class.java,
+            NyampyDatabase.NAME,
         ).addMigrations(
-            ChumpyDatabase.MIGRATION_1_2,
-            ChumpyDatabase.MIGRATION_2_3,
-            ChumpyDatabase.MIGRATION_3_4,
-            ChumpyDatabase.MIGRATION_4_5,
-            ChumpyDatabase.MIGRATION_5_6,
-            ChumpyDatabase.MIGRATION_6_7,
-            ChumpyDatabase.MIGRATION_7_8,
-            ChumpyDatabase.MIGRATION_8_9,
-            ChumpyDatabase.MIGRATION_9_10,
-            ChumpyDatabase.MIGRATION_10_11,
-            ChumpyDatabase.MIGRATION_11_12,
-            ChumpyDatabase.MIGRATION_12_13,
-            ChumpyDatabase.MIGRATION_13_14,
-            ChumpyDatabase.MIGRATION_14_15,
+            NyampyDatabase.MIGRATION_1_2,
+            NyampyDatabase.MIGRATION_2_3,
+            NyampyDatabase.MIGRATION_3_4,
+            NyampyDatabase.MIGRATION_4_5,
+            NyampyDatabase.MIGRATION_5_6,
+            NyampyDatabase.MIGRATION_6_7,
+            NyampyDatabase.MIGRATION_7_8,
+            NyampyDatabase.MIGRATION_8_9,
+            NyampyDatabase.MIGRATION_9_10,
+            NyampyDatabase.MIGRATION_10_11,
+            NyampyDatabase.MIGRATION_11_12,
+            NyampyDatabase.MIGRATION_12_13,
+            NyampyDatabase.MIGRATION_13_14,
+            NyampyDatabase.MIGRATION_14_15,
         ).build()
         subscriptions = SubscriptionRepository(
             context = application,
@@ -52,7 +52,7 @@ object Graph {
             // shared tunnel link. Fetches route through the loopback mixed inbound whenever
             // the tunnel is up, so a panel behind a block answers anyway.
             tunnelUp = {
-                ChumpyApp.tunnelClient.status.value.state == TunnelState.UP
+                NyampyApp.tunnelClient.status.value.state == TunnelState.UP
             },
             localProxy = { CoreConfigFile.localProxy(application) },
             // Also read at fetch time, through the shared settings state: the Happ

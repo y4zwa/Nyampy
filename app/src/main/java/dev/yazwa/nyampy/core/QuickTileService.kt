@@ -77,7 +77,7 @@ class QuickTileService : TileService() {
     @SuppressLint("StartActivityAndCollapseDeprecated")
     override fun onClick() {
         when (MihomoCore.currentStatus().state) {
-            TunnelState.UP, TunnelState.CONNECTING -> ChumpyVpnService.startDisconnect(this)
+            TunnelState.UP, TunnelState.CONNECTING -> NyampyVpnService.startDisconnect(this)
             TunnelState.DISCONNECTING -> Unit
             else -> {
                 val needsSetup = !CoreConfigFile.has(this) || VpnService.prepare(this) != null ||
@@ -96,7 +96,7 @@ class QuickTileService : TileService() {
                         }
                     }
                 } else {
-                    ChumpyVpnService.startConnect(this)
+                    NyampyVpnService.startConnect(this)
                 }
             }
         }
@@ -135,7 +135,7 @@ class QuickTileService : TileService() {
 
     /** The connected glyph in the picked variant's color. */
     private fun variantIcon(variant: IconVariant): Icon = when (variant) {
-        IconVariant.CHUMPY -> Icon.createWithResource(this, R.drawable.ic_tile_on)
+        IconVariant.NYAMPY -> Icon.createWithResource(this, R.drawable.ic_tile_on)
         // The dark variant's glyph is the white art too: the tile carries no background
         // of its own, so the night sky stays in the launcher.
         IconVariant.INVERTED -> Icon.createWithResource(this, R.drawable.ic_tile_inverted)

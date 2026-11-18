@@ -6,7 +6,7 @@ import dev.yazwa.nyampy.core.TunnelClient
 import dev.yazwa.nyampy.core.MihomoCore
 import java.io.File
 
-class ChumpyApp : Application() {
+class NyampyApp : Application() {
     override fun onCreate() {
         super.onCreate()
         if (currentProcessName().endsWith(":core")) {

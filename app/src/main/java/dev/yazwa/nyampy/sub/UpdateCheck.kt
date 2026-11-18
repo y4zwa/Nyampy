@@ -69,7 +69,7 @@ data class UpdateRelease(
  * network or a device.
  */
 object UpdateCheck {
-    private const val TAG = "Chumpy/Update"
+    private const val TAG = "Nyampy/Update"
 
     /** The repo's latest release, by GitHub's own "latest" (drafts and prereleases excluded). */
     const val RELEASES_URL = "https://api.github.com/repos/y4zwa/Nyampy/releases/latest"
@@ -120,7 +120,7 @@ object UpdateCheck {
     ): UpdateRelease? = withContext(Dispatchers.IO) {
         val body = suspendCancellableCoroutine { continuation ->
             val request = Request.Builder().url(RELEASES_URL)
-                .header("User-Agent", "Chumpy/${BuildConfig.VERSION_NAME}")
+                .header("User-Agent", "Nyampy/${BuildConfig.VERSION_NAME}")
                 .header("Accept", "application/vnd.github+json")
                 .build()
             val call = clientFor(if (tunnelUp()) localProxy() else null).newCall(request)
@@ -317,5 +317,5 @@ object UpdatePrefs {
 
     /** Where an update's APK lands: the app's own files, under updates/, named by its tag. */
     fun apkFile(context: Context, tag: String): File =
-        File(File(context.filesDir, "updates"), "Chumpy-$tag.apk")
+        File(File(context.filesDir, "updates"), "Nyampy-$tag.apk")
 }

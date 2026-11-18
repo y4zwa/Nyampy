@@ -97,7 +97,7 @@ import dev.yazwa.nyampy.ui.components.rememberHapticPokes
 import dev.yazwa.nyampy.data.UiSettings
 import dev.yazwa.nyampy.data.Accent
 import dev.yazwa.nyampy.data.FlagStyle
-import dev.yazwa.nyampy.ui.theme.ChumpyTheme
+import dev.yazwa.nyampy.ui.theme.NyampyTheme
 import dev.yazwa.nyampy.ui.theme.LocalUiSettings
 import dev.yazwa.nyampy.ui.theme.backdropScheme
 import dev.yazwa.nyampy.ui.wallpapers.ReportBarCoverage
@@ -733,7 +733,7 @@ private val TunnelState.label: Int
 @Preview(showBackground = true)
 @Composable
 private fun HomeScreenPreview() {
-    ChumpyTheme(settings = UiSettings(accent = Accent.VIOLET)) {
+    NyampyTheme(settings = UiSettings(accent = Accent.VIOLET)) {
         HomeScreen(
             status = TunnelStatus(TunnelState.UP),
             home = HomeUiState(

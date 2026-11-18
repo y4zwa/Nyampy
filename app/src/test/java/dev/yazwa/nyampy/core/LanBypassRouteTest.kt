@@ -56,7 +56,7 @@ class LanBypassRouteTest {
                     (first == 172 && second in 16..31) ||
                     (first == 192 && second == 168) ||
                     first in 224..255
-                val routed = ChumpyVpnService.ROUTED_IP_BLOCKS.any { (block, prefix) ->
+                val routed = NyampyVpnService.ROUTED_IP_BLOCKS.any { (block, prefix) ->
                     covers(block, prefix, "$first.$second.0.0", 16)
                 }
                 if (expectedLocal) {
@@ -73,7 +73,7 @@ class LanBypassRouteTest {
         localSamples.forEach { address ->
             assertFalse(
                 "$address must ride the physical network",
-                ChumpyVpnService.ROUTED_IP_BLOCKS.any { (block, prefix) -> covers(block, prefix, address, 32) },
+                NyampyVpnService.ROUTED_IP_BLOCKS.any { (block, prefix) -> covers(block, prefix, address, 32) },
             )
         }
     }
@@ -83,7 +83,7 @@ class LanBypassRouteTest {
         publicSamples.forEach { address ->
             assertTrue(
                 "$address must ride the tunnel",
-                ChumpyVpnService.ROUTED_IP_BLOCKS.any { (block, prefix) -> covers(block, prefix, address, 32) },
+                NyampyVpnService.ROUTED_IP_BLOCKS.any { (block, prefix) -> covers(block, prefix, address, 32) },
             )
         }
     }

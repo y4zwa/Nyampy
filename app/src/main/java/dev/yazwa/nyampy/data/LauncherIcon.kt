@@ -11,11 +11,11 @@ import android.content.pm.PackageManager
  * be a moment without a launcher entry at all.
  *
  * The choice survives updates and reboots (PackageManager remembers component states),
- * and a fresh install always starts from the manifest's default: the Chumpy icon.
+ * and a fresh install always starts from the manifest's default: the Nyampy icon.
  */
 object LauncherIcon {
     private val aliases: Map<IconVariant, String> = mapOf(
-        IconVariant.CHUMPY to "dev.yazwa.nyampy.LauncherChumpy",
+        IconVariant.NYAMPY to "dev.yazwa.nyampy.LauncherNyampy",
         IconVariant.INVERTED to "dev.yazwa.nyampy.LauncherInverted",
         IconVariant.THEMED to "dev.yazwa.nyampy.LauncherThemed",
         IconVariant.DARK to "dev.yazwa.nyampy.LauncherDark",
