@@ -2,6 +2,7 @@ import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
+import java.security.MessageDigest
 import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
@@ -141,25 +142,46 @@ kotlin {
     }
 }
 
-// The mihomo core is a build artefact, not source: the gomobile AAR lives in the
-// `core` GitHub release. The task is a no-op when the file is already present, so a
-// local build and a fresh checkout both work; a checkout without network can drop
-// the AAR into app/libs by hand.
+// The mihomo core is a build artefact, not source. The tag is immutable for a given
+// core build and the digest is pinned in the commit: a checkout made while an AAR is
+// being replaced cannot silently keep the wrong bytes, and an old commit keeps fetching
+// the AAR it was built against. A checkout without network can drop the AAR into
+// app/libs by hand; the digest still decides whether it may be used.
+val coreAarSha256 = "4d8377560c630368baa6c019a1f7c54b61e9af1e4fe09dfe0dd755d041afe2e1"
+val coreAarUrl = "https://github.com/y4zwa/Nyampy/releases/download/core-1.19.34-2/nyampycore.aar"
 val coreAar = layout.projectDirectory.file("libs/nyampycore.aar")
+
+fun coreAarDigest(file: java.io.File): String? {
+    if (!file.exists()) return null
+    val bytes = MessageDigest.getInstance("SHA-256").digest(file.readBytes())
+    return bytes.joinToString("") { "%02x".format(it.toInt() and 0xff) }
+}
+
 val fetchCoreAar = tasks.register("fetchCoreAar") {
-    description = "Downloads the mihomo core AAR from the core GitHub release."
+    description = "Downloads the pinned mihomo core AAR when the local copy is missing or stale."
     outputs.file(coreAar)
-    onlyIf { !coreAar.asFile.exists() }
+    outputs.upToDateWhen { coreAarDigest(coreAar.asFile) == coreAarSha256 }
     doLast {
-        val url = URI.create("https://github.com/y4zwa/Nyampy/releases/download/core/nyampycore.aar")
+        val file = coreAar.asFile
+        if (coreAarDigest(file) == coreAarSha256) {
+            logger.lifecycle("core AAR is present and matches its sha256")
+            return@doLast
+        }
+        file.parentFile.mkdirs()
+        file.delete()
+        val url = URI.create(coreAarUrl)
         logger.lifecycle("Downloading $url")
-        coreAar.asFile.parentFile.mkdirs()
         val client = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NORMAL).build()
         val response = client.send(
             HttpRequest.newBuilder(url).build(),
-            HttpResponse.BodyHandlers.ofFile(coreAar.asFile.toPath()),
+            HttpResponse.BodyHandlers.ofFile(file.toPath()),
         )
         check(response.statusCode() == 200) { "core AAR: HTTP ${response.statusCode()}" }
+        val actual = coreAarDigest(file)
+        check(actual == coreAarSha256) {
+            file.delete()
+            "core AAR sha256 mismatch: expected $coreAarSha256, got $actual"
+        }
     }
 }
 tasks.named("preBuild") { dependsOn(fetchCoreAar) }

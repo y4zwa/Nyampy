@@ -11,8 +11,8 @@ import slop.miho.chumpy.sub.SubscriptionRepository
 
 /**
  * The main process's few long-lived objects: the Room database and the subscription
- * repository on top of it. The ":core" process never touches this — it receives rendered
- * Xray configs through the file hand-off instead.
+ * repository on top of it. The ":core" process never touches this — it receives the
+ * rendered mihomo document through the file hand-off instead.
  */
 object Graph {
     lateinit var database: ChumpyDatabase

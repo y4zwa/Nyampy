@@ -34,9 +34,9 @@ Traffic counters cover the whole tunnel, DIRECT included.
 ./gradlew :app:assembleRelease
 ```
 
-The first build downloads the prebuilt core AAR from the `core` GitHub release into
-`app/libs/`. Without network, put `nyampycore.aar` there by hand — the Gradle task
-skips the download when the file already exists.
+The first build downloads the prebuilt core AAR from the pinned `core-1.19.34-2`
+GitHub release (sha256-checked) into `app/libs/`. Without network, put
+`nyampycore.aar` there by hand — the digest still decides whether it may be used.
 
 ## Thanks to
 

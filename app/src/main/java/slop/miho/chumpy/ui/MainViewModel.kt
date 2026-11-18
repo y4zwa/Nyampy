@@ -660,8 +660,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * The core's banner ("Xray 26.3.27 (Xray, Penetrates Everything.) d2758a0 …") trimmed
-     * to what a version line wants: the name and the number.
+     * The core's banner (its own name and build tag, e.g. "Mihomo 1.19.34 …") trimmed to
+     * what a version line wants: the name and the number.
      */
     private fun conciseCoreVersion(raw: String): String =
         raw.lineSequence().firstOrNull()?.substringBefore(" (")?.ifBlank { raw } ?: raw

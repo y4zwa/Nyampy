@@ -48,8 +48,10 @@ gomobile bind "-target=android/arm64,android/arm,android/amd64" `
 прочитать `/data/system/packages.xml` для Android-правил и падает с
 `permission denied` — туннель не поднимается.
 
-Готовый `nyampycore.aar` кладётся в `../app/libs/` и заливается ассетом в релиз
-`core` на GitHub; в git он не хранится, Gradle скачивает его при первой сборке.
+Готовый `nyampycore.aar` кладётся в `../app/libs/` и заливается ассетом в
+неизменяемый релиз `core-1.19.34-N` на GitHub; в git он не хранится, Gradle качает
+его при первой сборке и сверяет sha256. Новая пересборка ядра — новый тег, старые
+коммиты продолжают получать свои байты.
 
 ## Лицензия
 
