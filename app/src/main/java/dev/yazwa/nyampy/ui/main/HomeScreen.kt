@@ -274,8 +274,22 @@ fun HomeScreen(
 
 @Composable
 private fun greetingText(): String {
-    val hour = remember { Calendar.getInstance().get(Calendar.HOUR_OF_DAY) }
-    val greeting = when (hour) {
+    // The old `remember { Calendar... }` froze the hour for the composition's life:
+    // an app opened in the evening kept saying "good evening" the next morning. Refresh
+    // on resume and once a minute while the screen is actually resumed.
+    var hour by remember { mutableLongStateOf(currentHour().toLong()) }
+    val scope = rememberCoroutineScope()
+    LifecycleResumeEffect(Unit) {
+        hour = currentHour().toLong()
+        val ticker = scope.launch {
+            while (isActive) {
+                delay(60_000L)
+                hour = currentHour().toLong()
+            }
+        }
+        onPauseOrDispose { ticker.cancel() }
+    }
+    val greeting = when (hour.toInt()) {
         in 5..11 -> R.string.greeting_morning
         in 12..16 -> R.string.greeting_afternoon
         in 17..22 -> R.string.greeting_evening
@@ -283,6 +297,8 @@ private fun greetingText(): String {
     }
     return stringResource(greeting)
 }
+
+private fun currentHour(): Int = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
