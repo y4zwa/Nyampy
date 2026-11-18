@@ -1,0 +1,374 @@
+package slop.miho.chumpy.core
+
+import android.content.Context
+import android.os.RemoteCallbackList
+import android.os.RemoteException
+import android.os.SystemClock
+import android.util.Log
+import androidx.core.content.edit
+import nyampycore.Nyampycore
+import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import slop.miho.chumpy.data.DailyTrafficStore
+import slop.miho.chumpy.mihomo.ClashConfig
+
+/**
+ * Owner of the mihomo core (the gomobile bindings built from MetaCubeX/mihomo). Lives only in
+ * the ":core" process, which stays alive while the VPN is up, independently of the UI.
+ *
+ * mihomo keeps its state in the process, not in a controller object: configure once, attach
+ * the TUN handed over by [ChumpyVpnService], then read the counters. Every call that touches
+ * the core runs on one worker thread, the same discipline the Xray controller had.
+ */
+object MihomoCore {
+    private const val TAG = "Chumpy/MihomoCore"
+
+    /** Where the geo databases and the generated config live. */
+    private const val WORK_DIR = "mihomo"
+
+    /** The geo files as mihomo wants them: capitalised, in its own home directory. */
+    private const val GEOSITE = "GeoSite.dat"
+    private const val GEOIP = "GeoIP.dat"
+
+    /** The document's single-proxy name and the probe budget. */
+    private const val LIVE_PROXY_NAME = "node"
+    private const val PROBE_TIMEOUT_MS = 5000
+
+    private const val LOG_CAPACITY = 1000
+    private const val LOG_MAX_CHARS = 48 * 1024
+    private var logChars = 0
+
+    private lateinit var appContext: Context
+
+    private val worker = Executors.newSingleThreadExecutor { Thread(it, "mihomo-worker") }
+
+    private val initLatch = CountDownLatch(1)
+
+    @Volatile
+    private var initFailed: String? = null
+
+    /** Whether the core is running (config applied and TUN attached). */
+    @Volatile
+    var isRunning: Boolean = false
+        private set
+
+    private val callbacks = RemoteCallbackList<ITunnelCallback>()
+
+    @Volatile
+    private var status = TunnelStatus()
+
+    @Volatile
+    private var connectedAtMillis = 0L
+
+    /** The last TUN fd the VPN service handed us; -1 when the interface is gone. */
+    @Volatile
+    private var tunFd: Int = -1
+
+    private val logRing = ArrayDeque<String>(LOG_CAPACITY)
+
+    /**
+     * The app's own lines and the core's: the core's ring is what a rejected document
+     * writes its reason to, and it was collected but never read. The two rings carry
+     * different messages, so they simply follow each other.
+     */
+    fun coreLogs(): String {
+        val local = synchronized(logRing) { logRing.joinToString("\n") }
+        val core = runCatching { Nyampycore.logs() }.getOrNull().orEmpty()
+        return when {
+            core.isBlank() -> local
+            local.isBlank() -> core
+            else -> local + "\n" + core
+        }
+    }
+
+    fun recordTunnelFailure(stage: String, error: Exception) {
+        log(Log.ERROR, stage, error)
+    }
+
+    private fun log(level: Int, message: String, error: Exception? = null) {
+        val line = when (level) {
+            Log.ERROR -> "E/"
+            Log.WARN -> "W/"
+            else -> "I/"
+        } + message.take(2048) + (error?.let { ": ${it.message.orEmpty().take(1024)}" } ?: "")
+        synchronized(logRing) {
+            while (logRing.isNotEmpty() && (logRing.size >= LOG_CAPACITY || logChars + line.length > LOG_MAX_CHARS)) {
+                logChars -= logRing.removeFirst().length
+            }
+            logRing.addLast(line)
+            logChars += line.length
+        }
+        if (error != null) {
+            Log.println(level, TAG, "$message: ${error.message}")
+        } else {
+            Log.println(level, TAG, message)
+        }
+    }
+
+    private var pendingUiRx = 0L
+    private var pendingUiTx = 0L
+    private val pendingDaily = linkedMapOf<Long, LongArray>()
+    private var lastDailyFlush = 0L
+    private var lastUiTrafficAt = 0L
+
+    /** The last cumulative counters mihomo reported, for turning totals into deltas. */
+    private var lastTotalUp = 0L
+    private var lastTotalDown = 0L
+
+    /** The config directory: mihomo's home (geodata) and the last written document. */
+    fun workDir(context: Context = appContext): File = File(context.filesDir, WORK_DIR).also { it.mkdirs() }
+
+    fun configFile(context: Context = appContext): File = File(workDir(context), "config.yaml")
+
+    /** One-time environment init: data dir, geo assets, log level. */
+    fun init(context: Context) {
+        if (::appContext.isInitialized) return
+        appContext = context.applicationContext
+        worker.execute {
+            try {
+                installGeoAssets()
+                Nyampycore.setHome(workDir().absolutePath)
+                Nyampycore.setLogLevel("info")
+                Nyampycore.subscribe()
+                log(Log.INFO, "mihomo ${Nyampycore.version()} environment ready")
+            } catch (e: Exception) {
+                initFailed = e.message ?: e.javaClass.simpleName
+                log(Log.ERROR, "Failed to init core environment", e)
+            } finally {
+                initLatch.countDown()
+            }
+        }
+    }
+
+    private fun awaitInit() {
+        if (!initLatch.await(10, TimeUnit.SECONDS)) {
+            throw IllegalStateException("Core environment init timed out")
+        }
+    }
+
+    /**
+     * The geo databases are shipped in the APK; mihomo wants them as plain files with its
+     * own capitalisation, in its home directory. The copy is unconditional for the same
+     * reason as before: replacing two slim files is cheaper than version bookkeeping.
+     */
+    private fun installGeoAssets() {
+        val dir = workDir()
+        listOf("geosite.dat" to GEOSITE, "geoip.dat" to GEOIP).forEach { (asset, target) ->
+            val file = File(dir, target)
+            appContext.assets.open(asset).use { input ->
+                val tmp = File(dir, "$target.tmp")
+                tmp.outputStream().use { output -> input.copyTo(output) }
+                if (!tmp.renameTo(file)) {
+                    tmp.delete()
+                    throw IllegalStateException("Could not place $target")
+                }
+            }
+            log(Log.INFO, "Installed $target (${file.length()} bytes)")
+        }
+    }
+
+    /**
+     * Applies [configYaml] and attaches [fd]: blocks until the tunnel is up; returns null on
+     * success or the failure to show. Must run on the worker.
+     */
+    fun startLoop(configYaml: String, fd: Int): Exception? {
+        tunFd = fd
+        return try {
+            awaitInit()
+            initFailed?.let { return IllegalStateException(it) }
+            val file = configFile()
+            file.writeText(configYaml)
+            val freshStart = !isRunning
+            Nyampycore.configure(file.absolutePath)
+            // A config swap on a live TUN is just a reload: mihomo applies the document
+            // without touching the device, and the client's connections re-dial by
+            // themselves. Only a fresh start (after a stop) needs a new listener.
+            if (freshStart) {
+                Nyampycore.startTun(
+                    fd.toLong(),
+                    ClashConfig.TUN_MTU.toLong(),
+                    "gvisor",
+                    ClashConfig.GATEWAY,
+                    "",
+                    ClashConfig.DNS_HIJACK,
+                )
+            } else {
+                // A reloaded document leaves the connections opened through the old
+                // outbound alive: without this the phone would keep two exit addresses at
+                // once until those streams die on their own.
+                Nyampycore.closeConnections()
+            }
+            synchronized(this) {
+                lastTotalUp = Nyampycore.upTotal()
+                lastTotalDown = Nyampycore.downTotal()
+                if (lastUiTrafficAt == 0L) lastUiTrafficAt = SystemClock.elapsedRealtime()
+            }
+            // A reload keeps the session's clock: the tunnel never went down.
+            if (freshStart) connectedAtMillis = System.currentTimeMillis()
+            isRunning = true
+            null
+        } catch (e: Exception) {
+            isRunning = false
+            log(Log.ERROR, "startLoop failed", e)
+            e
+        }
+    }
+
+    /** Detaches the TUN listener; the core stays loaded for the next start. Worker only. */
+    fun stopLoop() {
+        synchronized(this) {
+            if (!isRunning) return
+            sampleTraffic()
+            flushDailyTraffic()
+            isRunning = false
+        }
+        try {
+            Nyampycore.stopTun()
+        } catch (e: Exception) {
+            log(Log.WARN, "stopTun failed", e)
+        }
+        connectedAtMillis = 0L
+    }
+
+    fun currentTunFd(): Int = tunFd
+
+    fun currentStatus(): TunnelStatus = status
+
+    fun upSince(): Long = connectedAtMillis
+
+    fun publish(newStatus: TunnelStatus) = synchronized(callbacks) {
+        status = newStatus
+        val count = callbacks.beginBroadcast()
+        try {
+            for (index in 0 until count) {
+                try {
+                    callbacks.getBroadcastItem(index).onStateChanged(newStatus.state.ordinal, newStatus.error)
+                } catch (_: RemoteException) {
+                    // The listener died with its process; the broadcast ring drops it.
+                }
+            }
+        } finally {
+            callbacks.finishBroadcast()
+        }
+    }
+
+    fun register(callback: ITunnelCallback) = synchronized(callbacks) {
+        callbacks.register(callback)
+        try {
+            callback.onStateChanged(status.state.ordinal, status.error)
+        } catch (_: RemoteException) {
+            callbacks.unregister(callback)
+        }
+    }
+
+    fun unregister(callback: ITunnelCallback) {
+        callbacks.unregister(callback)
+    }
+
+    /**
+     * A real HTTP delay through the profile's own proxy: mihomo parses the one-proxy
+     * document and probes it the way its url-test group does, so the number matches
+     * what every other Clash client shows.
+     */
+    fun measureOutboundDelay(configYaml: String, testUrl: String): Long {
+        if (awaitInitOrNull() == null) return -1L
+        return try {
+            Nyampycore.testDelay(configYaml, testUrl.ifEmpty { ClashConfig.DEFAULT_TEST_URL }, PROBE_TIMEOUT_MS.toLong()).toLong()
+        } catch (e: Exception) {
+            log(Log.WARN, "testDelay failed", e)
+            -1L
+        }
+    }
+
+    /**
+     * Delay through the *running* tunnel: the core probes the proxy it currently
+     * carries, the same request its own url-test would send.
+     */
+    fun measureLiveDelay(testUrl: String): Long {
+        if (!isRunning) return -1L
+        return try {
+            Nyampycore.liveDelay(LIVE_PROXY_NAME, testUrl.ifEmpty { ClashConfig.DEFAULT_TEST_URL }, PROBE_TIMEOUT_MS.toLong()).toLong()
+        } catch (e: Exception) {
+            log(Log.WARN, "liveDelay failed", e)
+            -1L
+        }
+    }
+
+    private fun awaitInitOrNull(): Unit? = try {
+        awaitInit()
+        if (initFailed != null) null else Unit
+    } catch (e: Exception) {
+        log(Log.WARN, "Core init not ready", e)
+        null
+    }
+
+
+    fun coreVersion(): String = try {
+        Nyampycore.version()
+    } catch (_: Throwable) {
+        "mihomo"
+    }
+
+    /**
+     * Per-interval {rx, tx} bytes for the UI, in the same shape the Xray build produced:
+     * mihomo reports cumulative totals, so the delta since the previous read is folded here.
+     */
+    @Synchronized
+    fun trafficBytes(): LongArray {
+        sampleTraffic()
+        val now = SystemClock.elapsedRealtime()
+        return longArrayOf(pendingUiRx, pendingUiTx, (now - lastUiTrafficAt).coerceAtLeast(1L)).also {
+            pendingUiRx = 0L
+            pendingUiTx = 0L
+            lastUiTrafficAt = now
+        }
+    }
+
+    @Synchronized
+    fun sampleTraffic() {
+        val delta = queryTrafficBytes()
+        pendingUiRx += delta[0]
+        pendingUiTx += delta[1]
+        if (delta[0] != 0L || delta[1] != 0L) {
+            val day = java.time.LocalDate.now().toEpochDay()
+            val bucket = pendingDaily.getOrPut(day) { longArrayOf(0, 0) }
+            bucket[0] += delta[0]
+            bucket[1] += delta[1]
+        }
+        if (System.currentTimeMillis() - lastDailyFlush >= 60_000L) flushDailyTraffic()
+    }
+
+    @Synchronized
+    private fun flushDailyTraffic() {
+        val iterator = pendingDaily.iterator()
+        while (iterator.hasNext()) {
+            val (day, bytes) = iterator.next()
+            try {
+                DailyTrafficStore.addDay(appContext, day, bytes[0], bytes[1])
+                iterator.remove()
+            } catch (e: Exception) {
+                log(Log.WARN, "Could not save daily traffic; retaining pending bytes", e)
+                break
+            }
+        }
+        lastDailyFlush = System.currentTimeMillis()
+    }
+
+    private fun queryTrafficBytes(): LongArray {
+        if (!isRunning) return longArrayOf(0L, 0L)
+        return try {
+            val upTotal = Nyampycore.upTotal()
+            val downTotal = Nyampycore.downTotal()
+            val rx = (downTotal - lastTotalDown).coerceAtLeast(0L)
+            val tx = (upTotal - lastTotalUp).coerceAtLeast(0L)
+            lastTotalUp = upTotal
+            lastTotalDown = downTotal
+            longArrayOf(rx, tx)
+        } catch (e: Exception) {
+            log(Log.WARN, "traffic query failed", e)
+            longArrayOf(0L, 0L)
+        }
+    }
+}

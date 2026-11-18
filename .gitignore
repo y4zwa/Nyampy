@@ -1,0 +1,32 @@
+.gradle/
+build/
+.kotlin/
+local.properties
+.idea/
+*.iml
+wg-adhdium.conf
+refs/
+dist/
+
+# The icon design sources and the skills lock — root squatters the build never reads.
+*.svg
+!icon.svg
+skills-lock.json
+
+# User-dropped feedback: crash logs and the builds they came from.
+feedback.md
+fedback/
+
+# The release signing key and its passwords: never leaves this machine.
+*.keystore
+keystore.properties
+
+# The delivery script and its log: local for now.
+build.sh
+build-*.log
+
+# The core AAR is rebuilt from nyampy-core/ and shipped as the 'core' release asset;
+# the copy in app/libs is a build artefact fetched by Gradle.
+nyampy-core/*.aar
+app/libs/*.aar
+

@@ -1,0 +1,289 @@
+proxies:
+  - name: "TEST ss-2022"
+    type: ss
+    server: 203.0.113.10
+    port: 21001
+    udp: true
+    cipher: 2022-blake3-aes-128-gcm
+    password: c3MyMDIyLXRlc3Qta2V5IQ==
+  - name: "TEST ss-aes-256"
+    type: ss
+    server: 203.0.113.10
+    port: 21002
+    udp: true
+    cipher: aes-256-gcm
+    password: ssplain-pass-2026
+  - name: "TEST ss-chacha20"
+    type: ss
+    server: 203.0.113.10
+    port: 21003
+    udp: true
+    cipher: chacha20-ietf-poly1305
+    password: ssplain-pass-2026
+  - name: "TEST ss-shadowtls"
+    type: ss
+    server: 203.0.113.10
+    port: 21004
+    udp: true
+    cipher: aes-256-gcm
+    password: ssplain-pass-2026
+    plugin: shadow-tls
+    plugin-opts:
+      host: www.microsoft.com
+      password: shadowtls-pass-2026
+      version: 3
+  - name: "TEST vmess-ws"
+    type: vmess
+    server: 203.0.113.10
+    port: 21010
+    udp: true
+    uuid: 00000000-1111-2222-3333-444444444444
+    alterId: 0
+    cipher: auto
+    network: ws
+    ws-opts:
+      path: "/vmws"
+  - name: "TEST vmess-ws-tls"
+    type: vmess
+    server: 203.0.113.10
+    port: 21011
+    udp: true
+    uuid: 00000000-1111-2222-3333-444444444444
+    alterId: 0
+    cipher: auto
+    network: ws
+    tls: true
+    servername: example.org
+    ws-opts:
+      path: "/vmws-tls"
+  - name: "TEST vmess-grpc-tls"
+    type: vmess
+    server: 203.0.113.10
+    port: 21012
+    udp: true
+    uuid: 00000000-1111-2222-3333-444444444444
+    alterId: 0
+    cipher: auto
+    network: grpc
+    tls: true
+    servername: example.org
+    grpc-opts:
+      grpc-service-name: vmgrpc
+  - name: "TEST vmess-reality"
+    type: vmess
+    server: 203.0.113.10
+    port: 21013
+    udp: true
+    uuid: 00000000-1111-2222-3333-444444444444
+    alterId: 0
+    cipher: auto
+    network: tcp
+    tls: true
+    servername: www.bing.com
+    client-fingerprint: chrome
+    reality-opts:
+      public-key: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+      short-id: 00000000
+  - name: "TEST vless-ws-tls"
+    type: vless
+    server: 203.0.113.10
+    port: 21020
+    udp: true
+    uuid: 00000000-1111-2222-3333-444444444444
+    network: ws
+    tls: true
+    servername: example.org
+    ws-opts:
+      path: "/vlws"
+  - name: "TEST vless-grpc-tls"
+    type: vless
+    server: 203.0.113.10
+    port: 21021
+    udp: true
+    uuid: 00000000-1111-2222-3333-444444444444
+    network: grpc
+    tls: true
+    servername: example.org
+    grpc-opts:
+      grpc-service-name: vlgrpc
+  - name: "TEST vless-xhttp-reality"
+    type: vless
+    server: 203.0.113.10
+    port: 21022
+    udp: true
+    uuid: 00000000-1111-2222-3333-444444444444
+    network: xhttp
+    tls: true
+    servername: www.bing.com
+    client-fingerprint: chrome
+    xhttp-opts:
+      path: "/vlxhttp"
+      mode: auto
+    reality-opts:
+      public-key: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+      short-id: 00000000
+  - name: "TEST vless-vision-reality"
+    type: vless
+    server: 203.0.113.10
+    port: 21023
+    udp: true
+    uuid: 00000000-1111-2222-3333-444444444444
+    network: tcp
+    tls: true
+    servername: reality.example.org
+    flow: xtls-rprx-vision
+    client-fingerprint: chrome
+    reality-opts:
+      public-key: BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
+      short-id: 1111111111111111
+  - name: "TEST trojan-ws-tls"
+    type: trojan
+    server: 203.0.113.10
+    port: 21030
+    udp: true
+    password: trojan-pass-2026
+    network: ws
+    sni: example.org
+    ws-opts:
+      path: "/tjws"
+  - name: "TEST trojan-grpc-tls"
+    type: trojan
+    server: 203.0.113.10
+    port: 21031
+    udp: true
+    password: trojan-pass-2026
+    network: grpc
+    sni: example.org
+    grpc-opts:
+      grpc-service-name: tjgrpc
+  - name: "TEST trojan-reality"
+    type: trojan
+    server: 203.0.113.10
+    port: 21032
+    udp: true
+    password: trojan-pass-2026
+    network: tcp
+    sni: www.bing.com
+    client-fingerprint: chrome
+    reality-opts:
+      public-key: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+      short-id: 00000000
+  - name: "TEST tuic"
+    type: tuic
+    server: 203.0.113.10
+    port: 21040
+    udp: true
+    uuid: 00000000-1111-2222-3333-444444444444
+    password: testpass2026
+    sni: example.org
+    alpn:
+      - h3
+    udp-relay-mode: native
+    congestion-controller: bbr
+  - name: "TEST hy2-obfs"
+    type: hysteria2
+    server: 203.0.113.10
+    port: 21041
+    udp: true
+    password: testpass2026
+    sni: example.org
+    obfs: salamander
+    obfs-password: hy2-obfs-pass-2026
+    alpn:
+      - h3
+  - name: "TEST hy2-plain"
+    type: hysteria2
+    server: 203.0.113.10
+    port: 21047
+    udp: true
+    password: testpass2026
+    sni: example.org
+    alpn:
+      - h3
+  - name: "TEST shadowquic"
+    type: shadowquic
+    server: 203.0.113.10
+    port: 21043
+    udp: true
+    username: yazwa
+    password: testpass2026
+    sni: www.google.com
+    alpn:
+      - h3
+  - name: "TEST anytls"
+    type: anytls
+    server: 203.0.113.10
+    port: 21042
+    udp: true
+    password: testpass2026
+    sni: example.org
+  - name: "TEST trusttunnel"
+    type: trusttunnel
+    server: 203.0.113.10
+    port: 21044
+    udp: true
+    username: yazwa
+    password: testpass2026
+    sni: example.org
+  - name: "TEST mieru-tcp"
+    type: mieru
+    server: 203.0.113.10
+    port: 21045
+    udp: true
+    transport: TCP
+    username: yazwa
+    password: testpass2026
+  - name: "TEST mieru-udp"
+    type: mieru
+    server: 203.0.113.10
+    port: 21046
+    udp: true
+    transport: UDP
+    username: yazwa
+    password: testpass2026
+  - name: "TEST snell-v4"
+    type: snell
+    server: 203.0.113.10
+    port: 21050
+    udp: true
+    psk: snell-psk-2026
+    version: 4
+    obfs-opts:
+      mode: http
+      host: www.bing.com
+  - name: "TEST snell-v5"
+    type: snell
+    server: 203.0.113.10
+    port: 21051
+    udp: true
+    psk: snell-psk-2026
+    version: 5
+  - name: "TEST sudoku"
+    type: sudoku
+    server: 203.0.113.10
+    port: 21052
+    udp: true
+    key: sudoku-test-key-2026
+  - name: "TEST socks5"
+    type: socks5
+    server: 203.0.113.10
+    port: 21060
+    udp: true
+    username: yazwa
+    password: testpass2026
+  - name: "TEST http"
+    type: http
+    server: 203.0.113.10
+    port: 21061
+    udp: true
+    username: yazwa
+    password: testpass2026
+  - name: "TEST http-tls"
+    type: http
+    server: 203.0.113.10
+    port: 21062
+    udp: true
+    username: yazwa
+    password: testpass2026
+    tls: true
+    sni: example.org

@@ -1,0 +1,86 @@
+package nyampycore
+
+// Delay measurement: mihomo can probe a proxy the same way its own url-test group
+// does -- a real HTTP request through the outbound, timed. Two entry points:
+//
+//   TestDelay   -- parse a one-proxy Clash document and probe it without touching the
+//                  running tunnel (used by the server list);
+//   LiveDelay   -- probe a proxy of the running tunnel (used by the connected screen).
+//
+// Both return milliseconds, or -1 when the probe fails.
+
+import (
+	"context"
+	"time"
+
+	"github.com/metacubex/mihomo/adapter"
+	"github.com/metacubex/mihomo/config"
+	C "github.com/metacubex/mihomo/constant"
+	"github.com/metacubex/mihomo/tunnel"
+)
+
+// TestDelay measures a real HTTP round trip through the first proxy of [yamlDoc].
+func TestDelay(yamlDoc string, url string, timeoutMs int) int {
+	if url == "" {
+		url = defaultProbeURL
+	}
+	raw, err := config.UnmarshalRawConfig([]byte(yamlDoc))
+	if err != nil || len(raw.Proxy) == 0 {
+		return -1
+	}
+	proxy, err := adapter.ParseProxy(raw.Proxy[0])
+	if err != nil {
+		return -1
+	}
+	return probe(proxy, url, timeoutMs)
+}
+
+// LiveDelay measures a real HTTP round trip through a proxy of the running tunnel.
+// An empty or unknown name falls back to the first real proxy the tunnel carries.
+func LiveDelay(name string, url string, timeoutMs int) int {
+	if url == "" {
+		url = defaultProbeURL
+	}
+	proxies := tunnel.Proxies()
+	proxy, ok := proxies[name]
+	if !ok || !isRealProxy(name) {
+		proxy = nil
+		for candidate, entry := range proxies {
+			if isRealProxy(candidate) {
+				proxy = entry
+				break
+			}
+		}
+	}
+	if proxy == nil {
+		return -1
+	}
+	return probe(proxy, url, timeoutMs)
+}
+
+func isRealProxy(name string) bool {
+	switch name {
+	case "DIRECT", "REJECT", "REJECT-DROP", "PASS", "COMPATIBLE", "GLOBAL", "PROXY":
+		return false
+	}
+	return true
+}
+
+func probe(proxy C.Proxy, url string, timeoutMs int) int {
+	if timeoutMs <= 0 {
+		timeoutMs = 5000
+	}
+	// Report the warm-connection round trip (one RTT), the number other clients show as
+	// "ping". Without this mihomo times the whole handshake: TCP + TLS + HTTP, i.e. three
+	// round trips, which reads as 3-5x the real latency.
+	adapter.UnifiedDelay.Store(true)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMs)*time.Millisecond)
+	defer cancel()
+	delay, err := proxy.URLTest(ctx, url, nil)
+	if err != nil {
+		return -1
+	}
+	return int(delay)
+}
+
+const defaultProbeURL = "https://www.gstatic.com/generate_204"
