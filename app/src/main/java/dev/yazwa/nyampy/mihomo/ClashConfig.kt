@@ -61,7 +61,9 @@ object ClashConfig {
         testUrl: String = DEFAULT_TEST_URL,
         knownGeoSite: Set<String>? = null,
         knownGeoIp: Set<String>? = null,
-        localProxy: LocalProxy = LocalProxy(10808, "nyampy", "nyampy"),
+        // No default: the inbound is a free proxy on loopback, so every caller names
+        // its own port and password rather than inheriting a shared one.
+        localProxy: LocalProxy,
     ): String {
         require(profile.type != ProfileType.BALANCER || members.isNotEmpty()) {
             "Balancer has no usable servers"
@@ -674,8 +676,22 @@ object ClashConfig {
                     // same values, Xray's camelCase turned into the kebab-case the core
                     // reads. path/mode/headers are already written from their columns.
                     extra?.forEach { (key, value) ->
-                        if (key !in setOf("path", "mode", "headers")) {
-                            emitJsonValue(y, 6, kebabKey(key), kebabTree(value))
+                        when {
+                            key in setOf("path", "mode", "headers") -> Unit
+                            kebabKey(key) == "download-settings" -> {
+                                // mihomo refuses the whole outbound when a split download
+                                // is asked for in stream-one mode ("xhttp mode
+                                // \"stream-one\" cannot be used with download-settings"),
+                                // so the setting goes rather than the tunnel.
+                                if (profile.mode.equals("stream-one", ignoreCase = true)) return@forEach
+                                val settings = value as? JsonObject ?: return@forEach
+                                if (settings.isEmpty()) return@forEach
+                                // A panel in the core's own spelling already: nothing to
+                                // translate, the tree goes through as it came.
+                                if (settings.isXrayDownloadTree()) emitDownloadSettings(y, 6, settings)
+                                else emitJsonValue(y, 6, "download-settings", kebabTree(settings))
+                            }
+                            else -> emitJsonValue(y, 6, kebabKey(key), kebabTree(value))
                         }
                     }
                 }
@@ -699,12 +715,107 @@ object ClashConfig {
         }.getOrNull()
     }
 
+    /**
+     * The Xray `downloadSettings` tree, rewritten as the flat object mihomo reads.
+     *
+     * The core's `XHTTPDownloadSettings` has no `address`, `security`, `tlsSettings`,
+     * `realitySettings` or `xhttpSettings`: the server sits next to `tls`, the TLS flags
+     * next to `path`, and REALITY keeps its own block. This mirrors the core's own
+     * share-link converter (`common/convert/v.go`); a blanket kebab-case pass would hand
+     * it keys it never reads, and the split download would go quiet.
+     *
+     * Nothing is written when there is nothing to translate: an empty block would only
+     * arm the same settings without a value.
+     */
+    private fun emitDownloadSettings(y: Yaml, indent: Int, ds: JsonObject) {
+        val scalars = linkedMapOf<String, String>()
+        ds.primitive("address")?.takeIf { it.isNotEmpty() }?.let { scalars["server"] = quote(it) }
+        ds.primitive("port")?.toIntOrNull()?.let { scalars["port"] = it.toString() }
+
+        val security = ds.primitive("security")?.lowercase(Locale.ROOT)
+        val tls = security == "tls" || security == "reality"
+        val tlsSettings = ds["tlsSettings"] as? JsonObject
+        val alpn = if (tls) {
+            (tlsSettings?.get("alpn") as? JsonArray)
+                ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.takeIf { value -> value.isNotEmpty() } }
+                ?.takeIf { it.isNotEmpty() }
+        } else null
+        if (tls) {
+            scalars["tls"] = "true"
+            tlsSettings?.primitive("serverName")?.takeIf { it.isNotEmpty() }?.let { scalars["servername"] = quote(it) }
+            tlsSettings?.primitive("fingerprint")?.takeIf { it.isNotEmpty() }?.let { scalars["client-fingerprint"] = quote(it) }
+            if (tlsSettings?.flag("allowInsecure") == true) scalars["skip-cert-verify"] = "true"
+        }
+
+        val reality = ds["realitySettings"] as? JsonObject
+        val realityOpts = linkedMapOf<String, String>()
+        if (tls && security == "reality") {
+            reality?.primitive("publicKey")?.takeIf { it.isNotEmpty() }?.let { realityOpts["public-key"] = quote(it) }
+            reality?.primitive("shortId")?.takeIf { it.isNotEmpty() }?.let { realityOpts["short-id"] = quote(it) }
+        }
+
+        val xhttp = ds["xhttpSettings"] as? JsonObject
+        xhttp?.primitive("path")?.takeIf { it.isNotEmpty() }?.let { scalars["path"] = quote(it) }
+        xhttp?.primitive("host")?.takeIf { it.isNotEmpty() }?.let { scalars["host"] = quote(it) }
+        val headers = (xhttp?.get("headers") as? JsonObject)?.takeIf { it.isNotEmpty() }
+        val xmux = ((xhttp?.get("extra") as? JsonObject)?.get("xmux") as? JsonObject)?.takeIf { it.isNotEmpty() }
+
+        if (scalars.isEmpty() && alpn == null && headers == null && realityOpts.isEmpty() && xmux == null) return
+
+        y.block(indent, "download-settings") {
+            scalars.forEach { (key, value) -> y.key(indent + 2, key, value) }
+            alpn?.let { y.items(indent + 2, "alpn", it.map(::quote)) }
+            if (realityOpts.isNotEmpty()) {
+                y.block(indent + 2, "reality-opts") {
+                    realityOpts.forEach { (key, value) -> y.key(indent + 4, key, value) }
+                }
+            }
+            headers?.let {
+                y.block(indent + 2, "headers") {
+                    it.forEach { (key, value) -> emitJsonValue(y, indent + 4, key, value) }
+                }
+            }
+            // xmux inside the download's xhttp settings is the same reuse-settings the
+            // root extra carries.
+            xmux?.let {
+                y.block(indent + 2, "reuse-settings") {
+                    val tree = kebabTree(it) as JsonObject
+                    tree.forEach { (key, value) -> emitJsonValue(y, indent + 4, key, value) }
+                }
+            }
+        }
+    }
+
+    /** The string a JSON leaf carries; numbers lose nothing a proxy option needs. */
+    private fun JsonObject.primitive(key: String): String? =
+        (this[key] as? JsonPrimitive)?.contentOrNull?.trim()
+
+    /** A JSON boolean, spelled the way a leaf may spell it. */
+    private fun JsonObject.flag(key: String): Boolean =
+        (this[key] as? JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull() == true
+
+    /**
+     * Whether a `downloadSettings` object is Xray's tree rather than the core's flat
+     * object: only the tree has the fields the translation consumes.
+     */
+    private fun JsonObject.isXrayDownloadTree(): Boolean =
+        listOf("address", "security", "tlsSettings", "realitySettings", "xhttpSettings")
+            .any { containsKey(it) }
+
     private val camelBoundary = Regex("([a-z0-9])([A-Z])")
     private val acronymBoundary = Regex("([A-Z]+)([A-Z][a-z])")
 
     /** Xray spells its XHTTP knobs camelCase; mihomo's proxy tags are kebab-case. */
     private fun kebabKey(key: String): String {
-        if (key == "xmux") return "reuse-settings"
+        when (key.lowercase(Locale.ROOT)) {
+            "xmux" -> return "reuse-settings"
+            // The core spells the session family without the "ID": a blanket kebab pass
+            // would hand it session-id-placement, a key it never reads.
+            "sessionidplacement" -> return "session-placement"
+            "sessionidkey" -> return "session-key"
+            "sessionidtable" -> return "session-table"
+            "sessionidlength" -> return "session-length"
+        }
         return key
             .replace(acronymBoundary, "$1-$2")
             .replace(camelBoundary, "$1-$2")

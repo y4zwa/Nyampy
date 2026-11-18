@@ -19,6 +19,11 @@ Android 8.0 (API 26) or newer.
 VLESS, VMess, Trojan, Shadowsocks, SOCKS, HTTP, WireGuard (AmneziaWG included),
 Hysteria2.
 
+XHTTP keeps the share link's `extra`, split download included: Xray's `downloadSettings`
+is rewritten into the core's own flat `download-settings`. In `stream-one` mode the pair
+is dropped — the core refuses it (`xhttp mode "stream-one" cannot be used with
+download-settings`) and the whole server would fail to start.
+
 ## IPv6
 
 The tunnel carries an IPv6 address and route, but the core runs with `ipv6: false` and

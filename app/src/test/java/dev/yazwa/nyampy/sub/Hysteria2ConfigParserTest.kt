@@ -5,6 +5,7 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 import dev.yazwa.nyampy.db.ProfileType
 import org.junit.Assert.assertTrue
+import dev.yazwa.nyampy.TEST_LOCAL_PROXY
 import dev.yazwa.nyampy.mihomo.ClashConfig
 import dev.yazwa.nyampy.mihomo.RoutingMode
 
@@ -42,7 +43,7 @@ class Hysteria2ConfigParserTest {
 
         // The document the core now runs: the same credentials and TLS fields, spelled
         // the Clash way.
-        val yaml = ClashConfig.buildFull(profile, RoutingMode.GLOBAL)
+        val yaml = ClashConfig.buildFull(profile, RoutingMode.GLOBAL, localProxy = TEST_LOCAL_PROXY)
         assertTrue(yaml, yaml.contains("type: hysteria2"))
         assertTrue(yaml, yaml.contains("password: test-password"))
         assertTrue(yaml, yaml.contains("sni: sni.example.com"))

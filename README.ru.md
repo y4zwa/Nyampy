@@ -19,6 +19,11 @@ Android 8.0 (API 26) или новее.
 VLESS, VMess, Trojan, Shadowsocks, SOCKS, HTTP, WireGuard (включая AmneziaWG),
 Hysteria2.
 
+XHTTP сохраняет `extra` из ссылки, включая раздельную загрузку: Xray-овский
+`downloadSettings` переводится в плоский `download-settings` ядра. В режиме
+`stream-one` пара выбрасывается — ядро её не принимает (`xhttp mode "stream-one" cannot
+be used with download-settings`), и весь сервер не поднялся бы.
+
 ## IPv6
 
 Туннель получает IPv6-адрес и маршрут, но ядро работает с `ipv6: false`, а DNS — с

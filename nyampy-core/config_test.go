@@ -74,14 +74,16 @@ func TestGeneratedProtocolConfigs(t *testing.T) {
 }
 
 // TestRepresentativeDocumentsParse covers the shapes the writer emits that the core
-// rejects most easily: grouped rules, a bare-address panel rule, load-balance, and a
-// WireGuard profile with both address families.
+// rejects most easily: grouped rules, a bare-address panel rule, load-balance, a
+// WireGuard profile with both address families, and an XHTTP profile whose split
+// download was rewritten into the core's flat download-settings.
 func TestRepresentativeDocumentsParse(t *testing.T) {
 	installGeodata(t)
 	for name, document := range map[string]string{
-		"tunnel": tunnelDocument,
-		"balancer": balancerDocument,
+		"tunnel":    tunnelDocument,
+		"balancer":  balancerDocument,
 		"wireguard": wireguardDocument,
+		"xhttp":     xhttpSplitDocument,
 	} {
 		t.Run(name, func(t *testing.T) { parseDocument(t, name, document) })
 	}
@@ -191,6 +193,53 @@ proxies:
     remote-dns-resolve: true
     dns:
       - 9.9.9.9
+proxy-groups:
+  - name: PROXY
+    type: select
+    proxies:
+      - "node"
+      - DIRECT
+rules:
+  - MATCH,PROXY
+`
+
+// xhttpSplitDocument is the shape emitDownloadSettings writes: Xray's downloadSettings
+// tree collapsed into the core's flat object, next to the transport's own knobs.
+const xhttpSplitDocument = `mixed-port: 10808
+mode: rule
+log-level: warning
+ipv6: false
+geodata-mode: true
+geo-auto-update: false
+proxies:
+  - name: "node"
+    type: "vless"
+    server: "a.example.com"
+    port: 443
+    udp: true
+    uuid: "00000000-1111-2222-3333-444444444444"
+    network: xhttp
+    xhttp-opts:
+      path: /x
+      mode: packet-up
+      download-settings:
+        server: dl.example.com
+        port: 8443
+        tls: true
+        servername: dl.example.com
+        client-fingerprint: chrome
+        skip-cert-verify: true
+        path: /d
+        host: dl.example.com
+        alpn:
+          - h2
+        reality-opts:
+          public-key: jNXHt1yRo0vDuchQlIP6Z0ZvjT3KtzVI-T4E7RoLJS0
+          short-id: ab
+        headers:
+          X-Test: 1
+        reuse-settings:
+          max-concurrency: 4-8
 proxy-groups:
   - name: PROXY
     type: select

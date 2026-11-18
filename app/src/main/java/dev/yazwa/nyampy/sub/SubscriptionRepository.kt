@@ -168,9 +168,6 @@ class SubscriptionRepository(
             }
         }
 
-    suspend fun prepareGeodata(profile: ProfileEntity, config: String, importedRouting: Boolean): String =
-        dev.yazwa.nyampy.data.GeodataFiles.prepare(context, config, profile.geodataSources, importedRouting, fetcher::fetchGeodata)
-
     suspend fun deleteSubscription(id: String) = withContext(Dispatchers.IO) {
         subscriptions.delete(id)
         logoFile(id).delete()

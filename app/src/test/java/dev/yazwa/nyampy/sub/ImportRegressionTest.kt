@@ -1,5 +1,6 @@
 package dev.yazwa.nyampy.sub
 
+import dev.yazwa.nyampy.TEST_LOCAL_PROXY
 import dev.yazwa.nyampy.mihomo.ClashConfig
 import dev.yazwa.nyampy.mihomo.RoutingMode
 import org.junit.Assert.*
@@ -97,9 +98,9 @@ class ImportRegressionTest {
             "routing":{"rules":[{"type":"field","domain":["domain:example.net"],"outboundTag":"custom-target"}]}
         }""")!!.single()
         // The panel's rule, rewritten as a Clash line and aimed at the session's target.
-        assertTrue(ClashConfig.buildFull(parse("blackhole"), RoutingMode.GLOBAL)
+        assertTrue(ClashConfig.buildFull(parse("blackhole"), RoutingMode.GLOBAL, localProxy = TEST_LOCAL_PROXY)
             .contains("DOMAIN-SUFFIX,example.net,REJECT"))
-        assertTrue(ClashConfig.buildFull(parse("freedom"), RoutingMode.GLOBAL)
+        assertTrue(ClashConfig.buildFull(parse("freedom"), RoutingMode.GLOBAL, localProxy = TEST_LOCAL_PROXY)
             .contains("DOMAIN-SUFFIX,example.net,DIRECT"))
     }
 
@@ -142,7 +143,7 @@ class ImportRegressionTest {
         assertTrue(profile.wgAmnezia, profile.wgAmnezia.contains("header-protection-key"))
         assertTrue(profile.wgAmnezia, profile.wgAmnezia.contains("random-trailers"))
 
-        val yaml = ClashConfig.buildFull(profile, RoutingMode.GLOBAL)
+        val yaml = ClashConfig.buildFull(profile, RoutingMode.GLOBAL, localProxy = TEST_LOCAL_PROXY)
         assertTrue(yaml, yaml.contains("amnezia-wg-option:"))
         assertTrue(yaml, yaml.contains("persistent-keepalive: 25"))
         assertTrue(yaml, yaml.contains("header-protection-key:"))

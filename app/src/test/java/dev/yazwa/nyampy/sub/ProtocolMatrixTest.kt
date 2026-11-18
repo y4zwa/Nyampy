@@ -5,6 +5,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import dev.yazwa.nyampy.db.ProfileType
+import dev.yazwa.nyampy.TEST_LOCAL_PROXY
 import dev.yazwa.nyampy.mihomo.ClashConfig
 import dev.yazwa.nyampy.mihomo.RoutingMode
 import java.io.File
@@ -52,7 +53,7 @@ class ProtocolMatrixTest {
         out.listFiles()?.forEach { it.delete() }
         val profiles = ClashYamlParser.parse(matrix())!!
         profiles.forEachIndexed { index, profile ->
-            val yaml = ClashConfig.buildFull(profile, RoutingMode.GLOBAL)
+            val yaml = ClashConfig.buildFull(profile, RoutingMode.GLOBAL, localProxy = TEST_LOCAL_PROXY)
             assertTrue("${profile.remarks}: no proxy block", yaml.contains("proxies:"))
             assertTrue("${profile.remarks}: no match rule", yaml.contains("MATCH,PROXY"))
             val name = "%02d-%s.yaml".format(
