@@ -32,20 +32,20 @@ class ClashConfigTest {
     }
 
     @Test
-    fun `the device resolvers answer for private zones and the bypass region`() {
-        val yaml = ClashConfig.buildFull(
-            vless(), RoutingMode.BYPASS_RU, systemDns = listOf("192.168.1.1"),
-        )
+    fun `private zones and the bypass region use the system resolver`() {
+        val yaml = ClashConfig.buildFull(vless(), RoutingMode.BYPASS_RU)
         assertTrue(yaml.contains("nameserver-policy:"))
         assertTrue(yaml.contains("+.lan"))
         assertTrue(yaml.contains("GEOSITE,category-ru,DIRECT"))
         assertTrue(yaml.contains("geosite:category-ru"))
+        assertTrue(yaml.contains("- system"))
     }
 
     @Test
-    fun `without device resolvers no policy is invented`() {
+    fun `the system resolver is named, not an address baked at build time`() {
         val yaml = ClashConfig.buildFull(vless(), RoutingMode.GLOBAL)
-        assertFalse(yaml.contains("nameserver-policy:"))
+        assertTrue(yaml.contains("nameserver-policy:"))
+        assertFalse(yaml.contains("192.168."))
     }
 
     @Test
@@ -79,8 +79,8 @@ class ClashConfigTest {
             routingRules = """[{"outboundTag":"direct","ip":["1.2.3.4","2001:db8::1"]}]""",
         )
         val yaml = ClashConfig.buildFull(profile, RoutingMode.GLOBAL)
-        assertTrue(yaml.contains("IP-CIDR,1.2.3.4/32,DIRECT"))
-        assertTrue(yaml.contains("IP-CIDR,2001:db8::1/128,DIRECT"))
+        assertTrue(yaml.contains("IP-CIDR,1.2.3.4/32,DIRECT,no-resolve"))
+        assertTrue(yaml.contains("IP-CIDR,2001:db8::1/128,DIRECT,no-resolve"))
         assertFalse(yaml.contains("no-resolve,DIRECT"))
     }
 

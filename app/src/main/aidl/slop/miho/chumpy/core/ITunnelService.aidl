@@ -29,7 +29,7 @@ interface ITunnelService {
      */
     long measureLiveDelay(String testUrl);
 
-    /** The Xray core version string, for the about screen. */
+    /** The mihomo core version string, for the about screen. */
     String coreVersion();
 
     /** The core's own captured log tail, oldest first — the viewer's whole text. */

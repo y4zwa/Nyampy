@@ -137,7 +137,7 @@ class TunnelClient(context: Context) {
         }
     }
 
-    /** The Xray core version, or null while the core process is unreachable. */
+    /** The mihomo core version, or null while the core process is unreachable. */
     fun coreVersion(): String? {
         val remote = service ?: return null
         return try {

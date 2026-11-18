@@ -121,9 +121,9 @@ private const val BUCKET_MILLIS = 15_000L
 /**
  * The stats screen: the week's daily bars first (they persist across runs, so the card is
  * full even when the live graphs are not), then the two live graphs over the fifteen-minute
- * window — the traffic (download filled, upload lined over it) from the Xray core's own
- * outbound counters — every read answers the bytes since the previous one, the core
- * resets its counters on each read — sampled once a second, and the packet loss as probe
+ * window — the traffic (download filled, upload lined over it) from the mihomo core's
+ * own counters — cumulative, the bridge turns each read into the bytes since the
+ * previous one — sampled once a second, and the packet loss as probe
  * buckets (a live delay measurement through the tunnel every fifteen seconds). The points on both graphs are 15-second averages — rare dots,
  * live updates — and both feeds wait a few seconds after the connect for the handshake storm
  * to settle. In the background the feeds keep running at a slower stride, so the history stays

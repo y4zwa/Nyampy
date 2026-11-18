@@ -312,6 +312,20 @@ object MihomoCore {
     }
 
     /**
+     * Hands the device's current resolvers to the core's `system` nameserver. The
+     * document's private-zone policy names "system"; this is what fills it in, so a
+     * handover only needs a fresh call, not a rebuilt document.
+     */
+    fun setSystemDNS(servers: List<String>) {
+        if (servers.isEmpty()) return
+        try {
+            Nyampycore.setSystemDNS(servers.joinToString(","))
+        } catch (e: Exception) {
+            log(Log.WARN, "setSystemDNS failed", e)
+        }
+    }
+
+    /**
      * Per-interval {rx, tx} bytes for the UI, in the same shape the Xray build produced:
      * mihomo reports cumulative totals, so the delta since the previous read is folded here.
      */

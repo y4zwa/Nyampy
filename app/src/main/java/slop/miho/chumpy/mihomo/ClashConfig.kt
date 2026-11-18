@@ -61,8 +61,6 @@ object ClashConfig {
         mode: RoutingMode,
         members: List<ProfileEntity> = emptyList(),
         testUrl: String = DEFAULT_TEST_URL,
-        /** The device's own resolvers, for private zones and the bypass region. */
-        systemDns: List<String> = emptyList(),
     ): String {
         require(profile.type != ProfileType.BALANCER || members.isNotEmpty()) {
             "Balancer has no usable servers"
@@ -110,19 +108,17 @@ object ClashConfig {
             y.items(2, "fake-ip-filter", listOf("*.lan", "+.local", "localhost.ptlogin2.qq.com").map(::quote))
             // The device's own resolvers also bootstrap the DoH endpoints and the proxy
             // server's name: with Cloudflare throttled, DoH alone never gets an answer.
-            y.items(2, "default-nameserver", (listOf("1.1.1.1", "8.8.8.8") + systemDns).distinct())
+            // "system" is fed by the bridge (SetSystemDNS) on every network change, so the
+            // document does not have to be rebuilt when the tunnel changes networks.
+            y.items(2, "default-nameserver", listOf("1.1.1.1", "8.8.8.8"))
             y.items(2, "nameserver", listOf("https://1.1.1.1/dns-query", "https://dns.google/dns-query"))
-            y.items(
-                2, "proxy-server-nameserver",
-                (listOf("https://1.1.1.1/dns-query") + systemDns).distinct(),
-            )
+            y.items(2, "proxy-server-nameserver", listOf("https://1.1.1.1/dns-query", "system"))
             // DoH knows nothing about the LAN's own zones, and it is a lottery in regions
             // where it is throttled: private names and the bypass region go to the device's
             // resolvers instead, the same ones the phone used before the tunnel.
-            val policy = dnsPolicy(mode, systemDns)
-            if (policy.isNotEmpty()) {
-                y.block(2, "nameserver-policy") {
-                    policy.forEach { (domain, servers) -> y.items(4, quote(domain), servers.map(::quote)) }
+            y.block(2, "nameserver-policy") {
+                dnsPolicy(mode).forEach { (domain, servers) ->
+                    y.items(4, quote(domain), servers.map(::quote))
                 }
             }
         }
@@ -244,7 +240,11 @@ object ClashConfig {
                 if (port != null) conditions += "DST-PORT,$port"
                 if (network != null) conditions += "NETWORK,$network"
                 out += if (conditions.size == 1) {
-                    "$primary,$target"
+                    // A lone address/country matcher needs no DNS for the destination;
+                    // the option belongs after the target, never before it. AND rules
+                    // cannot carry it per-condition, so they go without.
+                    val noResolve = primary.startsWith("IP-CIDR,") || primary.startsWith("GEOIP,")
+                    "$primary,$target" + if (noResolve) ",no-resolve" else ""
                 } else {
                     "AND,(" + conditions.joinToString(",") { "($it)" } + "),$target"
                 }
@@ -317,16 +317,16 @@ object ClashConfig {
      * office network keeps inside, plus the bypass region's own suffix, whose sites are
      * meant to travel direct and whose DNS is often the only one that answers locally.
      */
-    private fun dnsPolicy(mode: RoutingMode, systemDns: List<String>): Map<String, List<String>> {
-        if (systemDns.isEmpty()) return emptyMap()
+    private fun dnsPolicy(mode: RoutingMode): Map<String, List<String>> {
+        val system = listOf("system")
         val policy = linkedMapOf<String, List<String>>()
-        PRIVATE_ZONES.forEach { policy[it] = systemDns }
+        PRIVATE_ZONES.forEach { policy[it] = system }
         mode.region?.let { region ->
-            policy["+.$region"] = systemDns
+            policy["+.$region"] = system
             when (region) {
-                "ru" -> policy["geosite:category-ru"] = systemDns
-                "ir" -> policy["geosite:category-ir"] = systemDns
-                "cn" -> policy["geosite:cn"] = systemDns
+                "ru" -> policy["geosite:category-ru"] = system
+                "ir" -> policy["geosite:category-ir"] = system
+                "cn" -> policy["geosite:cn"] = system
             }
         }
         return policy

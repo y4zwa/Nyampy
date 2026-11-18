@@ -23,6 +23,7 @@ import android.util.Log
 import slop.miho.chumpy.MainActivity
 import slop.miho.chumpy.R
 import slop.miho.chumpy.data.ConnectionStore
+import java.net.Inet4Address
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.LinkedBlockingQueue
@@ -366,6 +367,22 @@ class ChumpyVpnService : VpnService() {
      * excluded from its own tunnel, so a VPN transport on the active network means the
      * carrier is someone else's.
      */
+    /**
+     * The resolvers the physical network handed out — what the document's `system`
+     * nameserver answers with. IPv4 only: the core runs with ipv6 off. Empty when no
+     * network is known; the previous list then stays in place.
+     */
+    private fun systemDnsServers(): List<String> {
+        val manager = connectivityManager
+            ?: getSystemService(ConnectivityManager::class.java)
+            ?: return emptyList()
+        val network = upstream ?: manager.activeNetwork ?: return emptyList()
+        return manager.getLinkProperties(network)?.dnsServers.orEmpty()
+            .filterIsInstance<Inet4Address>()
+            .mapNotNull { it.hostAddress }
+            .distinct()
+    }
+
     @Suppress("DEPRECATION")
     private fun foreignVpnHoldsTheDefault(): Boolean {
         // The service handle falls back to a fresh lookup: the watch outlives the tunnel
@@ -392,6 +409,10 @@ class ChumpyVpnService : VpnService() {
             // Declare what carries the VPN: the system's picture of the tunnel — its
             // meteredness above all — follows the real network, not the one that died.
             if (tunInterface != null) setUnderlyingNetworks(arrayOf(network))
+            // The new network's resolvers answer for the document's `system` policy now,
+            // before the re-dial even starts; a handover must not keep the old router's
+            // address for private zones.
+            MihomoCore.setSystemDNS(systemDnsServers())
             if (!watchSeeded) {
                 // The registration's own first report names the network we started on.
                 watchSeeded = true
@@ -517,6 +538,7 @@ class ChumpyVpnService : VpnService() {
                 }
                 val fd = tunInterface?.fd
                     ?: throw IllegalStateException(getString(R.string.error_tun_creation))
+                MihomoCore.setSystemDNS(systemDnsServers())
                 MihomoCore.startLoop(config, fd)?.let { throw it }
                 if (generation != commandGeneration.get()) return@execute
                 MihomoCore.publish(TunnelStatus(TunnelState.UP))
@@ -644,6 +666,7 @@ class ChumpyVpnService : VpnService() {
                 ?: throw IllegalStateException(getString(R.string.error_no_config))
             // mihomo can re-read its document on the live TUN: no need to tear the
             // interface down and build it again — the client's sockets simply re-dial.
+            MihomoCore.setSystemDNS(systemDnsServers())
             MihomoCore.startLoop(config, MihomoCore.currentTunFd())?.let { throw it }
             Log.i(TAG, "The core re-dialed onto the network now under it")
         } catch (e: Exception) {

@@ -153,17 +153,17 @@ data class TrafficSample(
 /** One 15-second window of connectivity probes: how many were sent, how many never completed. */
 data class LossBucket(val atMillis: Long, val sent: Int, val lost: Int)
 
-/** The stats screen's live history, kept in memory only: the core's outbound counters are
- *  read once a second — every read answers the bytes since the previous one, the core
- *  resets its counters on each read — and folded into 15-second buckets, the probes run
- *  every fifteen and land in the same buckets, and both trim to the graph window.
+/** The stats screen's live history, kept in memory only: the core's counters are
+ *  cumulative, the bridge turns each read into the bytes since the previous one, and
+ *  the result is folded into 15-second buckets; the probes run every fifteen and land
+ *  in the same buckets, and both trim to the graph window.
  *  Disconnecting freezes the history in place instead of clearing — the graphs stay on
  *  screen, and [frozenAtMillis] records when the data stopped moving. */
 data class StatsUiState(
     val samples: List<TrafficSample> = emptyList(),
     val buckets: List<LossBucket> = emptyList(),
-    /** The session's accumulated transfer, folded here from the per-query deltas (the
-     *  core resets its counters on every read) — the frozen connection's total. */
+    /** The session's accumulated transfer, folded here from the deltas the bridge
+     *  derives out of the core's cumulative counters — the frozen connection's total. */
     val rxTotal: Long = 0,
     val txTotal: Long = 0,
     /** When the graphs froze — the moment the tunnel went down; null while connected. */
@@ -467,7 +467,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** The Xray core version string, for the about screen. */
+    /** The mihomo core version string, for the about screen. */
     private val _coreVersion = MutableStateFlow<String?>(null)
     val coreVersion: StateFlow<String?> = _coreVersion.asStateFlow()
 
@@ -760,20 +760,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /**
-     * The resolvers the phone itself uses off-tunnel. IPv4 only: the document runs with
-     * ipv6 off, and a v6-only resolver would be unreachable for it. Empty when there is
-     * no active network — the config then keeps DoH for everything.
-     */
-    private fun systemDnsServers(): List<String> = runCatching {
-        val manager = app.getSystemService(ConnectivityManager::class.java)
-        val network = manager?.activeNetwork ?: return@runCatching emptyList()
-        manager.getLinkProperties(network)?.dnsServers.orEmpty()
-            .filterIsInstance<java.net.Inet4Address>()
-            .mapNotNull { it.hostAddress }
-            .distinct()
-    }.getOrDefault(emptyList())
-
     private fun applyConfigAndConnect(
         profile: ProfileEntity? = _servers.value.profiles.firstOrNull { it.id == connection.value.selectedProfileId }
             ?: _servers.value.profiles.firstOrNull(),
@@ -810,7 +796,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         requestedConnection.routingMode,
                         members,
                         requestedConnection.delayTestUrl,
-                        systemDnsServers(),
                     )
                     val subscriptionName = resolvedProfile.subscriptionId?.let { repository.subscriptionById(it)?.name }
                     currentCoroutineContext().ensureActive()
@@ -1343,15 +1328,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * The traffic feed: asks the core for its counters once a second and folds the bytes
-     * into 15-second buckets. Every query answers the bytes since the *previous* one —
-     * the core resets its counters on each read, the Xray way — so the rates are deltas
-     * over their own intervals and the session's totals grow here, one delta at a time;
-     * a reload that swaps the core underneath goes by unnoticed, both cores count from
-     * zero. The graph's points are the bucket averages (bytes over time, a background
-     * stride's longer interval weighed in), so they stay rare while the sampling
-     * underneath keeps its cadence, and the in-progress bucket keeps updating live until
-     * it settles. The day's bucket flushes at most once a minute; the exit flush in the
-     * finally block catches the session's tail — cancellation runs it too.
+     * into 15-second buckets. The core reports cumulative totals; the bridge subtracts
+     * the previous read, so every answer is the bytes since then, the rates are deltas
+     * over their own intervals, and the session's totals grow here one delta at a time.
+     * A reload rebases the bridge's baseline on the still-running core, so the swap goes
+     * by unnoticed. The graph's points are the bucket averages (bytes over time, a
+     * background stride's longer interval weighed in), so they stay rare while the
+     * sampling underneath keeps its cadence, and the in-progress bucket keeps updating
+     * live until it settles. The day's bucket flushes at most once a minute; the exit
+     * flush in the finally block catches the session's tail — cancellation runs it too.
      */
     private fun startTrafficLoop() {
         trafficJob?.cancel()

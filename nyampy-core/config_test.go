@@ -109,7 +109,7 @@ dns:
     - https://1.1.1.1/dns-query
   nameserver-policy:
     "+.lan":
-      - 192.168.1.1
+      - system
 proxies:
   - name: "node"
     type: "vless"
