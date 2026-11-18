@@ -8,6 +8,7 @@ import (
 	"github.com/metacubex/mihomo/config"
 	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/log"
+	T "github.com/metacubex/mihomo/tunnel"
 )
 
 // installGeodata points the core's home at a copy of the shipped .dat files, so the
@@ -38,14 +39,15 @@ func installGeodata(t *testing.T) {
 	log.SetLevel(log.SILENT)
 }
 
-// parseDocument is the real "the core can run it" check: the same two calls
-// Configure makes, without hub.ApplyConfig (nothing is started).
+// parseDocument is the real "the core can run it" check: unmarshal, the same patch
+// Configure applies, then parse — without hub.ApplyConfig (nothing is started).
 func parseDocument(t *testing.T, name, document string) {
 	t.Helper()
 	raw, err := config.UnmarshalRawConfig([]byte(document))
 	if err != nil {
 		t.Fatalf("%s: UnmarshalRawConfig: %v", name, err)
 	}
+	patch(raw, "nyampy:test")
 	if _, err := config.ParseRawConfig(raw); err != nil {
 		t.Fatalf("%s: ParseRawConfig: %v", name, err)
 	}
@@ -88,6 +90,87 @@ func TestRepresentativeDocumentsParse(t *testing.T) {
 		t.Run(name, func(t *testing.T) { parseDocument(t, name, document) })
 	}
 }
+
+// TestPatchTakesTheListeningSideAway is the second lock: whatever a document says about
+// inbounds, providers or trust, the bridge decides. The injected entries below are what
+// a rule line that escaped its own line used to be able to add.
+func TestPatchTakesTheListeningSideAway(t *testing.T) {
+	installGeodata(t)
+	raw, err := config.UnmarshalRawConfig([]byte(injectedDocument))
+	if err != nil {
+		t.Fatalf("UnmarshalRawConfig: %v", err)
+	}
+	if len(raw.Listeners) == 0 || len(raw.Tunnels) == 0 || !raw.AllowLan ||
+		len(raw.Hosts) == 0 || len(raw.ProxyProvider) == 0 || len(raw.RuleProvider) == 0 ||
+		raw.Port == 0 || raw.TLS.CustomTrustCert == nil || raw.ExternalUIURL == "" {
+		t.Fatalf("the test document lost its injected keys: %+v", raw)
+	}
+	patch(raw, "nyampy:trusted")
+	if raw.AllowLan || raw.BindAddress != "127.0.0.1" || len(raw.Listeners) != 0 ||
+		len(raw.Tunnels) != 0 || len(raw.SkipAuthPrefixes) != 0 ||
+		len(raw.Hosts) != 0 || len(raw.ProxyProvider) != 0 || len(raw.RuleProvider) != 0 ||
+		raw.Port != 0 || raw.SocksPort != 0 || len(raw.TLS.CustomTrustCert) != 0 ||
+		raw.ExternalUIURL != "" || raw.ExternalController != "" ||
+		len(raw.Authentication) != 1 || raw.Authentication[0] != "nyampy:trusted" {
+		t.Fatalf("patch left something from the document: %+v", raw)
+	}
+	// The writer's own keys survive: the tunnel still runs on them.
+	if raw.MixedPort != 10808 || raw.Mode != T.Rule || !raw.GeodataMode || len(raw.Proxy) == 0 ||
+		len(raw.Rule) == 0 || !raw.DNS.Enable || len(raw.ProxyGroup) == 0 {
+		t.Fatalf("patch dropped fields the writer emits: %+v", raw)
+	}
+}
+
+const injectedDocument = `mixed-port: 10808
+allow-lan: true
+bind-address: "*"
+port: 7890
+socks-port: 7891
+external-controller: 0.0.0.0:9090
+external-ui-url: "https://example.com/ui.zip"
+mode: rule
+geodata-mode: true
+geo-auto-update: false
+hosts:
+  "bank.example": "10.0.0.1"
+proxy-providers:
+  p:
+    type: http
+    url: "https://example.com/p.yaml"
+    path: ./p.yaml
+rule-providers:
+  r:
+    type: http
+    behavior: domain
+    url: "https://example.com/r.yaml"
+    path: ./r.yaml
+tls:
+  custom-certifactes:
+    - "./evil-ca.pem"
+dns:
+  enable: true
+  enhanced-mode: fake-ip
+  nameserver:
+    - 1.1.1.1
+proxies:
+  - name: "node"
+    type: "vless"
+    server: "a.example.com"
+    port: 443
+    uuid: "00000000-1111-2222-3333-444444444444"
+proxy-groups:
+  - name: PROXY
+    type: select
+    proxies:
+      - "node"
+      - DIRECT
+listeners:
+  - {name: leak, type: socks, port: 1080, listen: 0.0.0.0}
+tunnels:
+  - tcp,0.0.0.0:8080,example.com:80
+rules:
+  - MATCH,PROXY
+`
 
 const tunnelDocument = `mixed-port: 10808
 allow-lan: false

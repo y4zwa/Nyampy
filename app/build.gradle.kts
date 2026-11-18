@@ -38,7 +38,7 @@ android {
     // The version's own three numbers, handed out by hand: the global release — a new
     // feature's mark, 0 while the app's whole functionality is still landing — and the
     // minor release, raised on request. The third number is the build itself: the
-    // ever-counting one above, starting at 76.
+    // ever-counting one above, one less than it (the fork's first build is 1.0.0).
     val majorVersion = 1
     val minorVersion = 0
 
@@ -147,8 +147,8 @@ kotlin {
 // being replaced cannot silently keep the wrong bytes, and an old commit keeps fetching
 // the AAR it was built against. A checkout without network can drop the AAR into
 // app/libs by hand; the digest still decides whether it may be used.
-val coreAarSha256 = "7dbb31b5d42f9e876e1e93cd240f20a7cb6a7b4f59616afb23d1c9f14b5ccefb"
-val coreAarUrl = "https://github.com/y4zwa/Nyampy/releases/download/core-1.19.34-3/nyampycore.aar"
+val coreAarSha256 = "5d4dcdde3ae31639d26848b8e097d98e02da579f746dac1bd48cac9f675724ca"
+val coreAarUrl = "https://github.com/y4zwa/Nyampy/releases/download/core-1.19.34-4/nyampycore.aar"
 val coreAar = layout.projectDirectory.file("libs/nyampycore.aar")
 
 fun coreAarDigest(file: java.io.File): String? {

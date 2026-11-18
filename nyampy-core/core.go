@@ -73,8 +73,10 @@ func SetLogLevel(level string) {
 }
 
 // Configure applies a YAML config from the given file path. The app writes the
-// document; the core only patches the few knobs that make no sense on Android.
-func Configure(path string) error {
+// document; the core rebuilds it on its own defaults (see patch). authentication is
+// the loopback inbound's Basic-auth, handed over separately so that a document which
+// lost it cannot leave even the local proxy open.
+func Configure(path string, authentication string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -83,7 +85,7 @@ func Configure(path string) error {
 	if err != nil {
 		return err
 	}
-	patch(raw)
+	patch(raw, authentication)
 	parsed, err := config.ParseRawConfig(raw)
 	if err != nil {
 		return err
@@ -95,16 +97,62 @@ func Configure(path string) error {
 	return nil
 }
 
-// patch neutralises settings the VpnService owns on Android.
-func patch(raw *config.RawConfig) {
-	raw.ExternalController = ""
-	raw.ExternalControllerTLS = ""
-	raw.Interface = ""
-	raw.RoutingMark = 0
-	raw.Tun.Enable = false
-	raw.Tun.AutoRoute = false
-	raw.Tun.AutoDetectInterface = false
-	raw.Profile.StoreSelected = false
+// patch rebuilds the document on the core's own defaults, keeping only the fields the
+// app's writer is allowed to decide — the top-level keys ClashConfig emits. Everything
+// else stays at DefaultRawConfig: no extra inbounds, no listeners or tunnels, no proxy
+// or rule providers, no hosts override, no custom CA, no UI download, no external
+// controller. A field a future mihomo adds is denied by default.
+//
+// This is a whitelist, not a blacklist, on purpose. The document is a build artefact of
+// a subscription's data: its rule lines carry domains that came from someone else, and a
+// value that escaped its own line used to be able to add document structure. A
+// blacklist would chase every key mihomo grows; a whitelist ends the class.
+func patch(raw *config.RawConfig, authentication string) {
+	def := config.DefaultRawConfig()
+
+	// The listening side: one mixed inbound, loopback only. The port comes from the
+	// document (the app picks a random free one); the credentials come from the caller.
+	def.MixedPort = raw.MixedPort
+	if authentication != "" {
+		def.Authentication = []string{authentication}
+	}
+	def.AllowLan = false
+	def.BindAddress = "127.0.0.1"
+	def.SkipAuthPrefixes = nil
+	def.LanAllowedIPs = nil
+	def.LanDisAllowedIPs = nil
+
+	// Session behaviour the writer emits.
+	def.Mode = raw.Mode
+	def.LogLevel = raw.LogLevel
+	def.IPv6 = raw.IPv6
+	def.UnifiedDelay = raw.UnifiedDelay
+	def.TCPConcurrent = raw.TCPConcurrent
+	def.FindProcessMode = raw.FindProcessMode
+
+	// Geodata: the .dat files shipped in the APK; never auto-update.
+	def.GeodataMode = raw.GeodataMode
+	def.GeoAutoUpdate = false
+
+	// The routing payload itself: proxies and groups keep every per-proxy option
+	// (transport, REALITY, plugins, AmneziaWG), rules keep the panel's own lines.
+	def.Profile = raw.Profile
+	// The app rebuilds its group on every connect; a stored selection would outlive it.
+	def.Profile.StoreSelected = false
+	def.Sniffer = raw.Sniffer
+	def.DNS = raw.DNS
+	def.Proxy = raw.Proxy
+	def.ProxyGroup = raw.ProxyGroup
+	def.Rule = raw.Rule
+
+	// The TUN belongs to the VpnService and is attached by StartTun.
+	def.Tun = config.RawTun{}
+
+	// DefaultRawConfig carries the project's UI archive URL; nothing here ever asks for
+	// a UI (external-ui stays empty), but the URL has no business in this build either.
+	def.ExternalUIURL = ""
+
+	*raw = *def
 }
 
 // StartTun attaches the already-established TUN descriptor to the core.
@@ -115,9 +163,8 @@ func StartTun(fd int, mtu int, stack, gateway, dns string) error {
 	mu.Lock()
 	defer mu.Unlock()
 
-	// The descriptor is a dup owned by the core: close it on every path that fails
-	// before sing-tun takes it. Once New is called, the listener owns the fd and its
-	// own error path closes it.
+	// The descriptor is a dup the core owns. Everything this function fails on before
+	// the listener is built leaves it open, so the deferred close takes it back.
 	fdOwned := false
 	defer func() {
 		if !fdOwned {
@@ -178,6 +225,16 @@ func StartTun(fd int, mtu int, stack, gateway, dns string) error {
 		log.Debugln("TUN options: %s", string(verbose))
 	}
 
+	// From here on the number belongs to mihomo. New closes the device it built from
+	// it on every error past that point (its own deferred l.Close, which reaches
+	// l.tunIf), so closing the number ourselves would be a second close of a
+	// descriptor that may already belong to something else.
+	//
+	// The cost is the other half: New's returns before the device exists — range
+	// parsing, dns-hijack, the handler — leave the fd open, and that copy leaks, which
+	// keeps the TUN alive. Deliberate: those paths need option values this call never
+	// produces (the stack, the gateway and the dns hijack are constants), while a
+	// double close is the dearer failure to trace.
 	fdOwned = true
 	created, err := sing_tun.New(options, tunnel.Tunnel)
 	if err != nil {

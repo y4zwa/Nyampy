@@ -28,6 +28,9 @@ func TestDelay(yamlDoc string, url string, timeoutMs int) int {
 	if err != nil || len(raw.Proxy) == 0 {
 		return -1
 	}
+	// The probe document gets the same whitelist the tunnel document does: a test
+	// document has no business carrying inbounds, providers or a custom CA either.
+	patch(raw, "")
 	proxy, err := adapter.ParseProxy(raw.Proxy[0])
 	if err != nil {
 		return -1

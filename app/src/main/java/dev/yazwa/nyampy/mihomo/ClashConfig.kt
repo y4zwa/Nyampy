@@ -146,7 +146,9 @@ object ClashConfig {
             if (groupType == "load-balance") y.key(4, "strategy", "round-robin")
             y.key(4, "url", quote(testUrl))
             y.key(4, "interval", PROBE_INTERVAL.toString())
-            y.key(4, "lazy", "false")
+            // Probes only while the group is in use: a pool of any size would otherwise
+            // wake the radio every five minutes per member, for as long as the app runs.
+            y.key(4, "lazy", "true")
             y.key(4, "tolerance", "50")
             y.items(4, "proxies", (members.indices).map { quote(nodeName(it)) })
         } else {
@@ -233,7 +235,7 @@ object ClashConfig {
             if (rule.containsKey("protocol")) continue
             val target = targetOf(rule, fallthrough) ?: continue
 
-            val port = (rule["port"] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
+            val port = (rule["port"] as? JsonPrimitive)?.contentOrNull?.let(::portToken)
             val network = (rule["network"] as? JsonPrimitive)?.contentOrNull
                 ?.split(',')
                 ?.map { it.trim().lowercase() }
@@ -274,7 +276,7 @@ object ClashConfig {
     }
 
     private fun domainRule(raw: String, knownGeoSite: Set<String>?): String? {
-        val value = raw.trim()
+        val value = ruleToken(raw) ?: return null
         // Xray's external geodata (ext:file:category) has no mihomo counterpart: a
         // DOMAIN-SUFFIX with "ext:" in it would never match.
         if (value.isEmpty() || value.startsWith("ext:")) return null
@@ -297,7 +299,7 @@ object ClashConfig {
     }
 
     private fun ipRule(raw: String, knownGeoIp: Set<String>?): String? {
-        val value = raw.trim()
+        val value = ruleToken(raw) ?: return null
         if (value.isEmpty() || value.startsWith("ext:")) return null
         if (value.startsWith("geoip:")) {
             val country = value.removePrefix("geoip:")
@@ -317,6 +319,7 @@ object ClashConfig {
         // The option list comes after the target, so "IP-CIDR,1.2.3.4,no-resolve" would
         // name a proxy called "no-resolve"; the rule is left without one, which is the
         // default resolution behaviour anyway.
+        if (!ipCidr.matches(value)) return null
         return "IP-CIDR," + withHostPrefix(value)
     }
 
@@ -325,6 +328,31 @@ object ClashConfig {
         value.contains(':') -> "$value/128"
         else -> "$value/32"
     }
+
+    /**
+     * A panel value as a rule token, or null when it cannot be one.
+     *
+     * Rule lines are written verbatim — no quoting saves them — so a value carrying
+     * anything YAML reads as a line break (CR, NEL, LS, PS) would end the line and
+     * hand the rest of the document to whoever wrote the subscription. Everything else
+     * the rule syntax itself rejects is dropped too: one bad rule fails the whole
+     * document in mihomo, and a tunnel that will not start is its own kind of damage.
+     */
+    private fun ruleToken(raw: String): String? {
+        val value = raw.trim()
+        if (value.isEmpty()) return null
+        if (value.any { it.isISOControl() || it == '\u2028' || it == '\u2029' }) return null
+        if (value.any { it == ',' || it.isWhitespace() }) return null
+        return value
+    }
+
+    /** A port matcher: "80", "80,443", "1-1024" — and nothing that could leave the line. */
+    private fun portToken(raw: String): String? {
+        val value = ruleToken(raw) ?: return null
+        return value.takeIf { it.all { ch -> ch.isDigit() || ch == ',' || ch == '-' } }
+    }
+
+    private val ipCidr = Regex("[0-9A-Fa-f:.]+(/[0-9]{1,3})?")
 
     /** The Xray tag the rule pointed at, mapped onto this session's target. */
     private fun targetOf(rule: JsonObject, fallthrough: String): String? {
@@ -905,10 +933,24 @@ internal class Yaml {
 }
 
 internal fun quote(value: String): String {
-    val needsQuotes = value.isEmpty() || value.any { it in "\n:#[]{},&*!|>'\"%@`" } ||
-        value != value.trim() || value.equals("true", true) || value.equals("false", true) ||
-        value.equals("null", true) || value == "~" || value.toDoubleOrNull() != null ||
-        value.startsWith("-") || value.startsWith("?")
-    if (!needsQuotes) return value
-    return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+    // Always quoted. A bare YAML scalar has its own type rules (0x1234 is the integer
+    // 4660, .inf is a float, 1_000 is 1000) and its own line rules — a lone CR, NEL, LS
+    // or PS ends the line and lets the rest of the value become document structure.
+    // Some of these values come from a subscription, that is, from someone else. The
+    // document is a couple of kilobytes: there is nothing to save on the quotes.
+    val escaped = buildString(value.length + 8) {
+        value.forEach { ch ->
+            when {
+                ch == '\\' -> append("\\\\")
+                ch == '"' -> append("\\\"")
+                ch == '\n' -> append("\\n")
+                ch == '\r' -> append("\\r")
+                ch == '\t' -> append("\\t")
+                ch.isISOControl() || ch == '\u2028' || ch == '\u2029' ->
+                    append("\\u%04x".format(ch.code))
+                else -> append(ch)
+            }
+        }
+    }
+    return "\"$escaped\""
 }

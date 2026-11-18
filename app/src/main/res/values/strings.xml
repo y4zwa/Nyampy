@@ -241,7 +241,7 @@
 
 
     <!-- Stats screen -->
-    <string name="stats_traffic">Traffic</string>
+    <string name="stats_traffic">Tunnel traffic</string>
     <string name="stats_loss">Packet loss</string>
     <string name="stats_down">Down</string>
     <string name="stats_up">Up</string>

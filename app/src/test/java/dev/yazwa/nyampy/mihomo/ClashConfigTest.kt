@@ -1,5 +1,6 @@
 package dev.yazwa.nyampy.mihomo
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -35,6 +36,13 @@ class ClashConfigTest {
         id = "", subscriptionId = null, type = ProfileType.VLESS,
         remarks = name, server = "a.example.com", serverPort = 443,
         password = "00000000-1111-2222-3333-444444444444",
+    )
+
+    /** The document's own top-level keys, and nothing else, ever. */
+    private val TOP_LEVEL_KEYS = setOf(
+        "mixed-port", "authentication", "allow-lan", "mode", "log-level", "ipv6",
+        "unified-delay", "tcp-concurrent", "find-process-mode", "geodata-mode",
+        "geo-auto-update", "profile", "sniffer", "dns", "proxies", "proxy-groups", "rules",
     )
 
     @Test
@@ -99,11 +107,11 @@ class ClashConfigTest {
             xhttpExtra = """{"scMaxEachPostBytes":1000000,"noGRPCHeader":true,"headers":{"Host":"cdn.example.com"},"xmux":{"maxConcurrency":"16-32"}}""",
         )
         val yaml = build(profile, RoutingMode.GLOBAL)
-        assertTrue(yaml.contains("Host: cdn.example.com"))
-        assertTrue(yaml.contains("sc-max-each-post-bytes: 1000000"))
-        assertTrue(yaml.contains("no-grpc-header: true"))
-        assertTrue(yaml.contains("reuse-settings:"))
-        assertTrue(yaml.contains("max-concurrency: 16-32"))
+        assertTrue(yaml.contains("\"Host\": \"cdn.example.com\""))
+        assertTrue(yaml.contains("\"sc-max-each-post-bytes\": 1000000"))
+        assertTrue(yaml.contains("\"no-grpc-header\": true"))
+        assertTrue(yaml.contains("\"reuse-settings\":"))
+        assertTrue(yaml.contains("\"max-concurrency\": \"16-32\""))
         assertFalse(yaml.contains("scMaxEachPostBytes"))
     }
 
@@ -122,18 +130,18 @@ class ClashConfigTest {
         )
         val yaml = build(profile, RoutingMode.GLOBAL)
         assertTrue(yaml.contains("download-settings:"))
-        assertTrue(yaml.contains("server: dl.example.com"))
+        assertTrue(yaml.contains("""server: "dl.example.com""""))
         assertTrue(yaml.contains("port: 8443"))
         assertTrue(yaml.contains("tls: true"))
-        assertTrue(yaml.contains("servername: dl.example.com"))
-        assertTrue(yaml.contains("client-fingerprint: chrome"))
+        assertTrue(yaml.contains("""servername: "dl.example.com""""))
+        assertTrue(yaml.contains("""client-fingerprint: "chrome""""))
         assertTrue(yaml.contains("skip-cert-verify: true"))
-        assertTrue(yaml.contains("- h2"))
-        assertTrue(yaml.contains("public-key: pk"))
-        assertTrue(yaml.contains("short-id: ab"))
-        assertTrue(yaml.contains("path: /d"))
-        assertTrue(yaml.contains("host: dl.example.com"))
-        assertTrue(yaml.contains("max-concurrency: 4-8"))
+        assertTrue(yaml.contains("""- "h2""""))
+        assertTrue(yaml.contains("""public-key: "pk""""))
+        assertTrue(yaml.contains("""short-id: "ab""""))
+        assertTrue(yaml.contains("""path: "/d""""))
+        assertTrue(yaml.contains("""host: "dl.example.com""""))
+        assertTrue(yaml.contains("\"max-concurrency\": \"4-8\""))
         // The Xray spelling of the tree has no reader in the core.
         assertFalse(yaml.contains("address:"))
         assertFalse(yaml.contains("security:"))
@@ -149,9 +157,9 @@ class ClashConfigTest {
             xhttpExtra = """{"downloadSettings":{"server":"dl.example.com","port":8443,"tls":true}}""",
         )
         val yaml = build(profile, RoutingMode.GLOBAL)
-        assertTrue(yaml.contains("download-settings:"))
-        assertTrue(yaml.contains("server: dl.example.com"))
-        assertTrue(yaml.contains("tls: true"))
+        assertTrue(yaml.contains("\"download-settings\":"))
+        assertTrue(yaml.contains("\"server\": \"dl.example.com\""))
+        assertTrue(yaml.contains("\"tls\": true"))
         assertFalse(yaml.contains("address:"))
     }
 
@@ -173,10 +181,55 @@ class ClashConfigTest {
             xhttpExtra = """{"sessionIDPlacement":"header","sessionIDKey":"X-S","sessionIDLength":16}""",
         )
         val yaml = build(profile, RoutingMode.GLOBAL)
-        assertTrue(yaml.contains("session-placement: header"))
-        assertTrue(yaml.contains("session-key: X-S"))
-        assertTrue(yaml.contains("session-length: 16"))
+        assertTrue(yaml.contains("\"session-placement\": \"header\""))
+        assertTrue(yaml.contains("\"session-key\": \"X-S\""))
+        assertTrue(yaml.contains("\"session-length\": 16"))
         assertFalse(yaml.contains("session-id-"))
+    }
+
+    @Test
+    fun `a panel value cannot leave its rule line`() {
+        // The values come from a subscription, that is, from someone else. YAML reads a
+        // lone CR — and U+2028 — as a line break, so an unfiltered one would end the
+        // rule line and the rest of the value would become document structure.
+        val first = "x\rallow-lan: true\rauthentication:\r#"
+        val second = "x,DIRECT\rlisteners:\r  - {name: leak, type: socks, port: 1080, listen: 0.0.0.0}\rx:\r#"
+        val third = "x\u2028listeners:\u2028  - {name: leak, type: socks, port: 1080}\u2028x:\u2028#"
+        listOf(first, second, third).forEach { payload ->
+            val json = payload
+                .replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\r", "\\r")
+                .replace("\n", "\\n")
+                .replace("\u2028", "\\u2028")
+                .replace("\u2029", "\\u2029")
+            val profile = vless().copy(
+                routingRules = """[{"outboundTag":"direct","domain":["$json"],"port":"$json"}]""",
+            )
+            val yaml = build(profile, RoutingMode.GLOBAL)
+            assertEquals("a second allow-lan from $payload", 1, yaml.lines().count { it.startsWith("allow-lan:") })
+            assertFalse("an injected listener from $payload", yaml.contains("listeners:"))
+            assertFalse("a raw CR from $payload", yaml.contains("\r"))
+            assertFalse("a raw LS from $payload", yaml.contains("\u2028"))
+            // Whatever the payload, the document's own shape stays ours: every line that
+            // starts a top-level key is one of the writer's.
+            val topLevel = yaml.lines()
+                .filter { it.isNotEmpty() && !it.startsWith(" ") && !it.startsWith("-") }
+                .map { it.substringBefore(':') }
+                .toSet()
+            assertEquals("top-level keys from $payload", TOP_LEVEL_KEYS, topLevel)
+        }
+    }
+
+    @Test
+    fun `quoted values escape the breaks yaml would honour`() {
+        assertEquals("\"plain quoted\"", quote("plain quoted"))
+        assertEquals("\"a\\rb\"", quote("a\rb"))
+        assertEquals("\"a\\nb\"", quote("a\nb"))
+        assertEquals("\"a\\tb\"", quote("a\tb"))
+        assertEquals("\"a\\u2028b\"", quote("a\u2028b"))
+        assertEquals("\"a\\u0085b\"", quote("a\u0085b"))
+        assertEquals("\"plain\"", quote("plain"))
     }
 
     @Test
@@ -244,7 +297,7 @@ class ClashConfigTest {
             extraOptions = """{"dns":["9.9.9.9"]}""",
         )
         val yaml = build(profile, RoutingMode.GLOBAL)
-        assertTrue(yaml.contains("ip: 10.0.0.2/32"))
+        assertTrue(yaml.contains("""ip: "10.0.0.2/32""""))
         assertTrue(yaml.contains("fd00::2/128"))
         assertTrue(yaml.contains("persistent-keepalive: 25"))
         assertTrue(yaml.contains("- 9.9.9.9"))
@@ -254,6 +307,6 @@ class ClashConfigTest {
     fun `panel keys are quoted too`() {
         val profile = vless().copy(extraOptions = """{"x:y":"value"}""")
         val yaml = build(profile, RoutingMode.GLOBAL)
-        assertTrue(yaml.contains("\"x:y\": value"))
+        assertTrue(yaml.contains("""x:y": "value"""))
     }
 }

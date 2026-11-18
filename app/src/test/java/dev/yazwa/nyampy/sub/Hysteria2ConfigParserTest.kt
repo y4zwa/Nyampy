@@ -44,9 +44,9 @@ class Hysteria2ConfigParserTest {
         // The document the core now runs: the same credentials and TLS fields, spelled
         // the Clash way.
         val yaml = ClashConfig.buildFull(profile, RoutingMode.GLOBAL, localProxy = TEST_LOCAL_PROXY)
-        assertTrue(yaml, yaml.contains("type: hysteria2"))
-        assertTrue(yaml, yaml.contains("password: test-password"))
-        assertTrue(yaml, yaml.contains("sni: sni.example.com"))
+        assertTrue(yaml, yaml.contains("""type: "hysteria2""""))
+        assertTrue(yaml, yaml.contains("""password: "test-password""""))
+        assertTrue(yaml, yaml.contains("""sni: "sni.example.com""""))
         assertTrue(yaml, yaml.contains("alpn:"))
     }
 

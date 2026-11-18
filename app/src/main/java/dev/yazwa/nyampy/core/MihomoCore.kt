@@ -26,6 +26,9 @@ import dev.yazwa.nyampy.mihomo.ClashConfig
 object MihomoCore {
     private const val TAG = "Nyampy/MihomoCore"
 
+    /** How long a stop may take before the engine process is reaped. */
+    private const val STOP_GRACE_MILLIS = 5_000L
+
     /** Where the geo databases and the generated config live. */
     private const val WORK_DIR = "mihomo"
 
@@ -174,15 +177,19 @@ object MihomoCore {
      * is replaced. A fresh start needs the interface; its descriptor is duplicated with
      * detachFd() so the core owns one fd while the VpnService keeps the other - closing
      * the same integer twice is what fdsan aborts on.
+     *
+     * [authentication] is the loopback inbound's Basic-auth from the session's snapshot:
+     * the core forces it on the listener itself, so a document that lost the line still
+     * cannot leave an open proxy behind.
      */
-    fun startLoop(configYaml: String, tun: ParcelFileDescriptor?): Exception? {
+    fun startLoop(configYaml: String, tun: ParcelFileDescriptor?, authentication: String): Exception? {
         return try {
             awaitInit()
             initFailed?.let { return IllegalStateException(it) }
             val file = configFile()
             file.writeText(configYaml)
             val freshStart = !isRunning
-            Nyampycore.configure(file.absolutePath)
+            Nyampycore.configure(file.absolutePath, authentication)
             // A config swap on a live TUN is just a reload: mihomo applies the document
             // without touching the device, and the client's connections re-dial by
             // themselves. Only a fresh start (after a stop) needs a new listener.
@@ -239,6 +246,30 @@ object MihomoCore {
             log(Log.WARN, "stopTun failed", e)
         }
         connectedAtMillis = 0L
+    }
+
+    /**
+     * [stopLoop] behind a watchdog: the Go call runs on its own thread, and if it never
+     * returns — a hung sing-tun close would leave the service sitting in Disconnecting
+     * forever — the process is reaped. The service lives in ":core", so this takes the
+     * engine down and nothing else; the UI sees the binder die and shows the tunnel as
+     * down. Dev-only calls that cannot afford the wait still use [stopLoop] directly.
+     */
+    fun stopLoopWatched() {
+        val finished = CountDownLatch(1)
+        val worker = Thread({
+            try {
+                stopLoop()
+            } finally {
+                finished.countDown()
+            }
+        }, "core-stop")
+        worker.isDaemon = true
+        worker.start()
+        if (!finished.await(STOP_GRACE_MILLIS, TimeUnit.MILLISECONDS)) {
+            log(Log.ERROR, "The core did not stop within $STOP_GRACE_MILLIS ms; reaping the process")
+            android.os.Process.killProcess(android.os.Process.myPid())
+        }
     }
 
     fun currentStatus(): TunnelStatus = status

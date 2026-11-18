@@ -239,7 +239,7 @@
 
 
     <!-- Статистика -->
-    <string name="stats_traffic">Трафик</string>
+    <string name="stats_traffic">Трафик туннеля</string>
     <string name="stats_loss">Потери пакетов</string>
     <string name="stats_down">Входящий</string>
     <string name="stats_up">Исходящий</string>

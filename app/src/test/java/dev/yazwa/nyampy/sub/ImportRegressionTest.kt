@@ -146,8 +146,8 @@ class ImportRegressionTest {
         val yaml = ClashConfig.buildFull(profile, RoutingMode.GLOBAL, localProxy = TEST_LOCAL_PROXY)
         assertTrue(yaml, yaml.contains("amnezia-wg-option:"))
         assertTrue(yaml, yaml.contains("persistent-keepalive: 25"))
-        assertTrue(yaml, yaml.contains("header-protection-key:"))
-        assertTrue(yaml, yaml.contains("i1:"))
+        assertTrue(yaml, yaml.contains("""header-protection-key":"""))
+        assertTrue(yaml, yaml.contains("""i1":"""))
     }
 
 }

@@ -496,7 +496,7 @@ class NyampyVpnService : VpnService() {
         commandGeneration.incrementAndGet()
         stopTunnelWatch()
         worker.execute {
-            MihomoCore.stopLoop()
+            MihomoCore.stopLoopWatched()
             closeTun()
             MihomoCore.publish(TunnelStatus(TunnelState.DOWN))
         }
@@ -528,7 +528,7 @@ class NyampyVpnService : VpnService() {
                 val liveTun = tunInterface
                 val reloadInPlace = liveTun != null && MihomoCore.isRunning && tunShape == appFilter
                 if (!reloadInPlace) {
-                    MihomoCore.stopLoop()
+                    MihomoCore.stopLoopWatched()
                     closeTun()
                     closeKeptTun()
                     val tun = establishTun(appFilter.first to appFilter.second, appFilter.third)
@@ -539,7 +539,8 @@ class NyampyVpnService : VpnService() {
                 val tun = tunInterface
                     ?: throw IllegalStateException(getString(R.string.error_tun_creation))
                 MihomoCore.setSystemDNS(systemDnsServers())
-                MihomoCore.startLoop(config, tun)?.let { throw it }
+                MihomoCore.startLoop(config, tun, CoreConfigFile.snapshot(this)?.localProxy?.authentication.orEmpty())
+                    ?.let { throw it }
                 if (generation != commandGeneration.get()) return@execute
                 MihomoCore.publish(TunnelStatus(TunnelState.UP))
                 // The guards ride with the running tunnel: handovers under it re-dial it,
@@ -563,7 +564,7 @@ class NyampyVpnService : VpnService() {
                     notifyReconnectFailed(describe(e))
                 }
                 stopTunnelWatch()
-                MihomoCore.stopLoop()
+                MihomoCore.stopLoopWatched()
                 closeTun()
                 MihomoCore.publish(TunnelStatus(TunnelState.DOWN, describe(e)))
                 stopForeground(STOP_FOREGROUND_REMOVE)
@@ -595,7 +596,7 @@ class NyampyVpnService : VpnService() {
         worker.execute {
             try {
                 stopTunnelWatch()
-                MihomoCore.stopLoop()
+                MihomoCore.stopLoopWatched()
                 if (keepTun) {
                     keptTun = tunInterface
                     tunInterface = null
@@ -667,12 +668,13 @@ class NyampyVpnService : VpnService() {
             // mihomo can re-read its document on the live TUN: no need to tear the
             // interface down and build it again — the client's sockets simply re-dial.
             MihomoCore.setSystemDNS(systemDnsServers())
-            MihomoCore.startLoop(config, null)?.let { throw it }
+            MihomoCore.startLoop(config, null, CoreConfigFile.snapshot(this)?.localProxy?.authentication.orEmpty())
+                ?.let { throw it }
             Log.i(TAG, "The core re-dialed onto the network now under it")
         } catch (e: Exception) {
             MihomoCore.recordTunnelFailure("The handover re-dial failed", e)
             stopTunnelWatch()
-            MihomoCore.stopLoop()
+            MihomoCore.stopLoopWatched()
             closeTun()
             MihomoCore.publish(TunnelStatus(TunnelState.DOWN, describe(e)))
             notifyInterrupted(describe(e))
