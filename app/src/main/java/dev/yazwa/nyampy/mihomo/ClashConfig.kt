@@ -319,7 +319,7 @@ object ClashConfig {
         // The option list comes after the target, so "IP-CIDR,1.2.3.4,no-resolve" would
         // name a proxy called "no-resolve"; the rule is left without one, which is the
         // default resolution behaviour anyway.
-        if (!ipCidr.matches(value)) return null
+        if (!isNumericAddress(value)) return null
         return "IP-CIDR," + withHostPrefix(value)
     }
 
@@ -346,13 +346,64 @@ object ClashConfig {
         return value
     }
 
-    /** A port matcher: "80", "80,443", "1-1024" — and nothing that could leave the line. */
+    /**
+     * A port matcher: "80", "80,443", "1-1024". Commas are the syntax here, so it is
+     * validated on its own rather than through [ruleToken], which drops them; only
+     * ASCII digits pass, the way the core's parser expects.
+     */
     private fun portToken(raw: String): String? {
-        val value = ruleToken(raw) ?: return null
-        return value.takeIf { it.all { ch -> ch.isDigit() || ch == ',' || ch == '-' } }
+        val value = raw.trim()
+        if (value.isEmpty()) return null
+        if (value.any { it.isISOControl() || it == '\u2028' || it == '\u2029' || it.isWhitespace() }) return null
+        return value.takeIf { it.all { ch -> ch in '0'..'9' || ch == ',' || ch == '-' } }
     }
 
-    private val ipCidr = Regex("[0-9A-Fa-f:.]+(/[0-9]{1,3})?")
+    /**
+     * Whether a bare matcher really is an address. mihomo parses `IP-CIDR` with
+     * `netip.ParsePrefix`, which rejects the whole document over one bad rule, so
+     * "999.999.999.999" must never reach it: a shape check alone is not enough.
+     */
+    private fun isNumericAddress(value: String): Boolean {
+        val address = value.substringBefore('/')
+        val prefix = value.substringAfter('/', "")
+        val v6 = ':' in address
+        if (prefix.isNotEmpty()) {
+            val bits = prefix.toIntOrNull() ?: return false
+            if (bits !in 0..(if (v6) 128 else 32)) return false
+            if (prefix.length > 1 && prefix.startsWith('0')) return false
+        }
+        return if (v6) isIpv6(address) else isIpv4(address)
+    }
+
+    private fun isIpv4(value: String): Boolean {
+        val parts = value.split('.')
+        if (parts.size != 4) return false
+        return parts.all { part ->
+            part.isNotEmpty() && part.length <= 3 && part.all { it in '0'..'9' } &&
+                (part.length == 1 || !part.startsWith('0')) && part.toInt() <= 255
+        }
+    }
+
+    private fun isIpv6(value: String): Boolean {
+        if (value.isEmpty()) return false
+        val halves = value.split("::")
+        if (halves.size > 2) return false
+        fun groups(part: String): List<String> = if (part.isEmpty()) emptyList() else part.split(':')
+        val head = groups(halves[0])
+        var tail = groups(if (halves.size == 2) halves[1] else "")
+        // The tail may end with an embedded IPv4 address ("::ffff:1.2.3.4"), which
+        // counts as two groups.
+        val embeddedV4 = tail.isNotEmpty() && '.' in tail.last()
+        if (embeddedV4) {
+            if (!isIpv4(tail.last())) return false
+            tail = tail.dropLast(1)
+        }
+        fun validGroup(group: String) =
+            group.length in 1..4 && group.all { it in '0'..'9' || it.lowercaseChar() in 'a'..'f' }
+        if (!head.all(::validGroup) || !tail.all(::validGroup)) return false
+        val count = head.size + tail.size + if (embeddedV4) 2 else 0
+        return if (halves.size == 2) count <= 7 else count == 8
+    }
 
     /** The Xray tag the rule pointed at, mapped onto this session's target. */
     private fun targetOf(rule: JsonObject, fallthrough: String): String? {
@@ -463,7 +514,7 @@ object ClashConfig {
                 reservedOf(profile)?.let { y.key(4, "reserved", it) }
                 if (profile.wgKeepalive > 0) y.key(4, "persistent-keepalive", profile.wgKeepalive.toString())
                 y.key(4, "remote-dns-resolve", "true")
-                y.items(4, "dns", wireguardDns(profile))
+                y.items(4, "dns", wireguardDns(profile).map(::quote))
                 emitAmnezia(y, profile)
             }
 
@@ -874,14 +925,14 @@ object ClashConfig {
                 if (profile.sni.isNotEmpty()) y.key(4, sniKey, quote(profile.sni))
                 if (profile.allowInsecure) y.key(4, "skip-cert-verify", "true")
                 if (profile.fingerprint.isNotEmpty()) y.key(4, "client-fingerprint", quote(profile.fingerprint))
-                if (alpnSupported && alpn.isNotEmpty()) y.items(4, "alpn", alpn)
+                if (alpnSupported && alpn.isNotEmpty()) y.items(4, "alpn", alpn.map(::quote))
             }
 
             "reality" -> {
                 if (tlsFlag) y.key(4, "tls", "true")
                 if (profile.sni.isNotEmpty()) y.key(4, sniKey, quote(profile.sni))
                 if (profile.fingerprint.isNotEmpty()) y.key(4, "client-fingerprint", quote(profile.fingerprint))
-                if (alpnSupported && alpn.isNotEmpty()) y.items(4, "alpn", alpn)
+                if (alpnSupported && alpn.isNotEmpty()) y.items(4, "alpn", alpn.map(::quote))
                 y.block(4, "reality-opts") {
                     y.key(6, "public-key", quote(profile.publicKey))
                     if (profile.shortId.isNotEmpty()) y.key(6, "short-id", quote(profile.shortId))

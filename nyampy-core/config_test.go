@@ -121,6 +121,22 @@ func TestPatchTakesTheListeningSideAway(t *testing.T) {
 	}
 }
 
+// TestPatchFailsClosedWithoutCredentials: no credentials, no inbound. The caller always
+// has the value; a caller that lost it must not leave an unauthenticated proxy behind.
+func TestPatchFailsClosedWithoutCredentials(t *testing.T) {
+	raw, err := config.UnmarshalRawConfig([]byte(tunnelDocument))
+	if err != nil {
+		t.Fatalf("UnmarshalRawConfig: %v", err)
+	}
+	if raw.MixedPort == 0 {
+		t.Fatal("the test document lost its mixed-port")
+	}
+	patch(raw, "")
+	if raw.MixedPort != 0 || len(raw.Authentication) != 0 {
+		t.Fatalf("an empty authentication left the inbound open: port=%d auth=%v", raw.MixedPort, raw.Authentication)
+	}
+}
+
 const injectedDocument = `mixed-port: 10808
 allow-lan: true
 bind-address: "*"

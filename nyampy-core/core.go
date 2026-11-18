@@ -112,8 +112,13 @@ func patch(raw *config.RawConfig, authentication string) {
 
 	// The listening side: one mixed inbound, loopback only. The port comes from the
 	// document (the app picks a random free one); the credentials come from the caller.
-	def.MixedPort = raw.MixedPort
-	if authentication != "" {
+	// Without them there is no inbound at all: a loopback proxy without auth is still a
+	// free proxy for every app on the device, so a caller that lost the value fails
+	// closed instead of opening.
+	if authentication == "" {
+		def.MixedPort = 0
+	} else {
+		def.MixedPort = raw.MixedPort
 		def.Authentication = []string{authentication}
 	}
 	def.AllowLan = false

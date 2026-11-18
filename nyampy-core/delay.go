@@ -11,6 +11,7 @@ package nyampycore
 
 import (
 	"context"
+	"sort"
 	"time"
 
 	"github.com/metacubex/mihomo/adapter"
@@ -39,7 +40,9 @@ func TestDelay(yamlDoc string, url string, timeoutMs int) int {
 }
 
 // LiveDelay measures a real HTTP round trip through a proxy of the running tunnel.
-// An empty or unknown name falls back to the first real proxy the tunnel carries.
+// An empty or unknown name falls back to the first real proxy in name order — a map
+// walk would pick a different node on every call, and a number that moves on its own
+// is worse than no number when something is being debugged.
 func LiveDelay(name string, url string, timeoutMs int) int {
 	if url == "" {
 		url = defaultProbeURL
@@ -48,11 +51,15 @@ func LiveDelay(name string, url string, timeoutMs int) int {
 	proxy, ok := proxies[name]
 	if !ok || !isRealProxy(name) {
 		proxy = nil
-		for candidate, entry := range proxies {
+		candidates := make([]string, 0, len(proxies))
+		for candidate := range proxies {
 			if isRealProxy(candidate) {
-				proxy = entry
-				break
+				candidates = append(candidates, candidate)
 			}
+		}
+		if len(candidates) > 0 {
+			sort.Strings(candidates)
+			proxy = proxies[candidates[0]]
 		}
 	}
 	if proxy == nil {

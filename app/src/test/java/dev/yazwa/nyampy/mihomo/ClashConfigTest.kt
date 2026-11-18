@@ -233,6 +233,54 @@ class ClashConfigTest {
     }
 
     @Test
+    fun `tls lists and wireguard dns cannot leave their line either`() {
+        val payload = "h3\rlisteners:\r  - {name: leak, type: socks, port: 1080, listen: 0.0.0.0}\rx:\r#"
+        val json = payload.replace("\\", "\\\\").replace("\"", "\\\"").replace("\r", "\\r")
+        val tls = build(vless().copy(security = "tls", alpn = payload), RoutingMode.GLOBAL)
+        val wg = build(
+            ProfileEntity(
+                id = "", subscriptionId = null, type = ProfileType.WIREGUARD,
+                remarks = "wg", server = "wg.example.com", serverPort = 51820,
+                wgSecretKey = "yAnz5TF+lXXJte14tji3zlMNq+hd2rYUIgJBgB3fBmk=",
+                publicKey = "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
+                wgLocalAddress = "10.0.0.2/32",
+                extraOptions = """{"dns":["$json"]}""",
+            ),
+            RoutingMode.GLOBAL,
+        )
+        listOf("alpn" to tls, "wireguard dns" to wg).forEach { (name, yaml) ->
+            assertFalse("a raw CR from $name", yaml.contains("\r"))
+            assertFalse("an injected listener from $name", yaml.lines().any { it.startsWith("listeners:") })
+            assertEquals("a second allow-lan from $name", 1, yaml.lines().count { it.startsWith("allow-lan:") })
+            // The value still reaches the core — quoted, escaped, on one line.
+            assertTrue("$name lost its value", yaml.contains("\\rlisteners"))
+        }
+    }
+
+    @Test
+    fun `a port list stays a port list`() {
+        val profile = vless().copy(
+            routingRules = """[{"outboundTag":"direct","ip":["1.2.3.4"],"port":"80,443"}]""",
+        )
+        val yaml = build(profile, RoutingMode.GLOBAL)
+        assertTrue(yaml, yaml.contains("DST-PORT,80,443"))
+        assertTrue(yaml, yaml.contains("1.2.3.4/32"))
+    }
+
+    @Test
+    fun `an address the core cannot parse is dropped, not the document`() {
+        val profile = vless().copy(
+            routingRules = """[{"outboundTag":"direct","ip":["999.999.999.999","1.2.3.4/999","2001:db8::1","::ffff:1.2.3.4","1.2.3.4"]}]""",
+        )
+        val yaml = build(profile, RoutingMode.GLOBAL)
+        assertFalse(yaml, yaml.contains("999."))
+        assertFalse(yaml, yaml.contains("/999"))
+        assertTrue(yaml, yaml.contains("IP-CIDR,2001:db8::1/128"))
+        assertTrue(yaml, yaml.contains("IP-CIDR,::ffff:1.2.3.4/128"))
+        assertTrue(yaml, yaml.contains("IP-CIDR,1.2.3.4/32"))
+    }
+
+    @Test
     fun `private zones and the bypass region use the system resolver`() {
         val yaml = build(vless(), RoutingMode.BYPASS_RU)
         assertTrue(yaml.contains("nameserver-policy:"))
@@ -300,7 +348,7 @@ class ClashConfigTest {
         assertTrue(yaml.contains("""ip: "10.0.0.2/32""""))
         assertTrue(yaml.contains("fd00::2/128"))
         assertTrue(yaml.contains("persistent-keepalive: 25"))
-        assertTrue(yaml.contains("- 9.9.9.9"))
+        assertTrue(yaml.contains("- \"9.9.9.9\""))
     }
 
     @Test
