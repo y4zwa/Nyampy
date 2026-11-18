@@ -10,7 +10,7 @@ import (
 // with an empty host and never answers; CMFA appends :53 for the same reason.
 //
 // The input may already carry a port ("1.1.1.1:5353", "[fd00::1]:53"), be a bare
-// address ("192.168.2.1", "fd00::1") or the hijack keyword "any".
+// address ("192.0.2.1", "fd00::1") or the hijack keyword "any".
 func withDefaultPort(address, port string) string {
 	address = strings.TrimSpace(address)
 	if address == "" {
