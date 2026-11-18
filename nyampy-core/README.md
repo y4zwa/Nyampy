@@ -40,12 +40,13 @@ go install golang.org/x/mobile/cmd/gomobile@latest
 go get -tool golang.org/x/mobile/cmd/gobind@latest
 gomobile init
 gomobile bind "-target=android/arm64,android/arm,android/amd64" `
-  "-androidapi=26" "-tags=with_gvisor" "-ldflags=-s -w" "-o=nyampycore.aar" "."
+  "-androidapi=26" "-tags=with_gvisor,cmfa" "-ldflags=-s -w" "-o=nyampycore.aar" "."
 ```
 
-Тег `with_gvisor` обязателен: без него sing_tun не умеет gvisor-стек. Тег `cmfa`
-включает сборку под CMFA (`UpdateSystemDNS`), но приложению он не нужен: системные
-резолверы подставляются в конфиг как обычные IP-адреса.
+Оба тега обязательны. `with_gvisor` даёт sing_tun gvisor-стек. `cmfa` переключает
+ядро на сокеты и пакеты, которые ему отдаёт `VpnService`; без него TUN пытается
+прочитать `/data/system/packages.xml` для Android-правил и падает с
+`permission denied` — туннель не поднимается.
 
 Готовый `nyampycore.aar` кладётся в `../app/libs/` и заливается ассетом в релиз
 `core` на GitHub; в git он не хранится, Gradle скачивает его при первой сборке.

@@ -29,4 +29,5 @@ build-*.log
 # the copy in app/libs is a build artefact fetched by Gradle.
 nyampy-core/*.aar
 app/libs/*.aar
+app/libs/*.jar
 
