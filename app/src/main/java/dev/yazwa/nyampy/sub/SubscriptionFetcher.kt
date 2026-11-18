@@ -1,0 +1,248 @@
+package dev.yazwa.nyampy.sub
+
+import androidx.core.net.toUri
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import okhttp3.Call
+import okhttp3.Callback
+import okhttp3.Credentials
+import okhttp3.Response
+import java.util.zip.GZIPInputStream
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.util.concurrent.TimeUnit
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import android.net.Uri
+import java.io.IOException
+import java.net.InetSocketAddress
+import java.net.Proxy
+import dev.yazwa.nyampy.mihomo.LocalProxy
+
+/**
+ * Fetches a subscription body with cancellation and an overall deadline. When the tunnel is up the
+ * request goes through the running core's loopback mixed inbound - the app package is
+ * excluded from the VPN routes, so this is the only way a blocked panel stays reachable
+ * (the arrangement Hiddify uses, and the reason the config always listens on it).
+ *
+ * Every fetch dresses up as the Happ client when the global spoof is on: the fingerprint
+ * is read at fetch time, so a flip in the settings is live on the very next fetch.
+ */
+class SubscriptionFetcher(
+    private val tunnelUp: () -> Boolean,
+    private val happSpoof: () -> HappSpoof.Fingerprint?,
+    private val localProxy: () -> LocalProxy?,
+) {
+    private companion object {
+        /**
+         * A deliberately chatty client UA: panels key their response format off it. The
+         * v2rayNG keyword buys the generic link list, the plain name the raw-config
+         * body — both parsers handle those; sing-box/clash keywords would be answered
+         * with Clash YAML or sing-box JSON, so they stay out.
+         */
+        const val USER_AGENT = "Nyampy/1.0 (Android) v2rayNG/1.10"
+
+        const val CONNECT_TIMEOUT_MS = 15_000
+        const val READ_TIMEOUT_MS = 30_000
+
+        /** Panels that serve anything larger are doing something else; do not OOM the app. */
+        const val MAX_BODY_BYTES = 8 * 1024 * 1024
+
+        /** A logo past this is not an avatar; PNG/SVG weigh far less. */
+        const val MAX_LOGO_BYTES = 2 * 1024 * 1024
+        val directClient by lazy {
+            OkHttpClient.Builder()
+            .connectTimeout(CONNECT_TIMEOUT_MS.toLong(), TimeUnit.MILLISECONDS)
+            .readTimeout(READ_TIMEOUT_MS.toLong(), TimeUnit.MILLISECONDS)
+            .callTimeout(45, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(false)
+            .build()
+        }
+        /** The core's mixed inbound is HTTP+SOCKS; HTTP is what OkHttp authenticates. */
+        fun tunnelClient(proxy: LocalProxy): OkHttpClient =
+            directClient.newBuilder()
+                .proxy(Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", proxy.port)))
+                .proxyAuthenticator { _, response ->
+                    if (response.request.header("Proxy-Authorization") != null) null
+                    else response.request.newBuilder()
+                        .header("Proxy-Authorization", Credentials.basic(proxy.username, proxy.password))
+                        .build()
+                }
+                .build()
+    }
+
+    /** Direct when the tunnel is down; through its authenticated mixed inbound when up. */
+    private fun client(): OkHttpClient {
+        val proxy = if (tunnelUp()) localProxy() else null
+        return if (proxy != null) tunnelClient(proxy) else directClient
+    }
+
+    data class FetchResult(
+        val body: String,
+        val metadata: SubscriptionMetadata,
+    )
+
+    /**
+     * Throws [IOException] with a readable message on failure. The Happ fingerprint,
+     * when the settings carry one, takes the UA and the x- headers over from the app's
+     * own identity.
+     */
+    suspend fun fetch(rawUrl: String): FetchResult {
+        val response = fetchResponse(rawUrl)
+        val source = response.metadata.routingProfileUrl ?: return response
+        val profile = fetchResponse(source)
+        val sources = GeodataSources.fromRoutingBody(profile.body)
+        if (sources.isEmpty()) throw IOException("Routing profile provides no geodata download URLs")
+        return response.copy(metadata = response.metadata.copy(
+            geodataSources = GeodataSources.merge(response.metadata.geodataSources, sources),
+        ))
+    }
+
+    private suspend fun fetchResponse(rawUrl: String): FetchResult = suspendCancellableCoroutine { continuation ->
+        val client = client()
+        val request = Request.Builder().url(normalizeUrl(rawUrl)).get()
+        val fingerprint = happSpoof()
+        if (fingerprint != null) HappSpoof.headers(fingerprint).forEach { (name, value) -> request.header(name, value) }
+        else request.header("User-Agent", USER_AGENT).header("Accept", "*/*")
+        val call = client.newCall(request.build())
+        continuation.invokeOnCancellation { call.cancel() }
+        call.enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                if (continuation.isActive) continuation.resumeWithException(e)
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                try {
+                    val result = response.use {
+                        if (!it.isSuccessful) throw IOException("HTTP ${it.code}")
+                        val input = it.body?.byteStream() ?: throw IOException("Empty subscription body")
+                        val bytes = (if (it.header("Content-Encoding").equals("gzip", true)) GZIPInputStream(input) else input)
+                            .use { stream -> stream.readNBytesCompat(MAX_BODY_BYTES) }
+                        val body = String(bytes, Charsets.UTF_8)
+                        if (body.isBlank()) throw IOException("Empty subscription body")
+                        val decoded = SubscriptionParser.decodeBody(body)
+                        FetchResult(decoded, SubscriptionHeaders.parseResponse(it.headers.toMultimap(), decoded))
+                    }
+                    if (continuation.isActive) continuation.resume(result)
+                } catch (e: Exception) {
+                    if (continuation.isActive) continuation.resumeWithException(e)
+                }
+            }
+        })
+    }
+
+    suspend fun fetchGeodata(url: String, target: java.io.File): Unit = suspendCancellableCoroutine { continuation ->
+        val parsed = url.toHttpUrlOrNull()
+        if (parsed == null || !parsed.isHttps || parsed.username.isNotEmpty() || parsed.password.isNotEmpty()) {
+            continuation.resumeWithException(IOException("Geodata requires an HTTPS URL without embedded credentials"))
+            return@suspendCancellableCoroutine
+        }
+        val base = client()
+        val client = base.newBuilder().followSslRedirects(false).callTimeout(45, java.util.concurrent.TimeUnit.SECONDS).build()
+        val call = client.newCall(Request.Builder().url(parsed).header("User-Agent", USER_AGENT).build())
+        continuation.invokeOnCancellation { call.cancel() }
+        call.enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) { if (continuation.isActive) continuation.resumeWithException(e) }
+            override fun onResponse(call: Call, response: Response) {
+                try {
+                    response.use {
+                        if (!it.isSuccessful || !it.request.url.isHttps) throw IOException("Geodata HTTP ${it.code}")
+                        val input = it.body?.byteStream()?.buffered() ?: throw IOException("Empty geodata")
+                        input.mark(2)
+                        val gzip = input.read() == 0x1f && input.read() == 0x8b
+                        input.reset()
+                        val stream = if (gzip) GZIPInputStream(input) else input
+                        stream.use { source -> target.outputStream().buffered().use { output ->
+                            val buffer = ByteArray(64 * 1024)
+                            var total = 0L
+                            while (true) {
+                                if (!continuation.isActive) throw IOException("Cancelled")
+                                val count = source.read(buffer)
+                                if (count < 0) break
+                                total += count
+                                if (total > dev.yazwa.nyampy.data.GeodataFiles.MAX_BYTES) throw IOException("Geodata exceeds 64 MiB")
+                                output.write(buffer, 0, count)
+                            }
+                            if (total == 0L) throw IOException("Empty geodata")
+                        } }
+                    }
+                    if (continuation.isActive) continuation.resume(Unit)
+                } catch (e: Exception) { if (continuation.isActive) continuation.resumeWithException(e) }
+            }
+        })
+    }
+
+    /**
+     * A `profile-logo` value's parsed form, or null when it is not a URL — the scheme
+     * is defaulted the subscription way (bare means https; a strict check would turn
+     * away the panels that omit it).
+     */
+    fun parseLogoUrl(rawUrl: String): okhttp3.HttpUrl? {
+        val trimmed = rawUrl.trim()
+        if (trimmed.isEmpty()) return null
+        return normalizeUrl(trimmed).toHttpUrlOrNull()
+    }
+
+    /**
+     * Downloads a `profile-logo` image (PNG or SVG), capped at [MAX_LOGO_BYTES]; rides
+     * the core's mixed inbound when the tunnel is up, like a subscription body.
+     * Throws [IOException] with a readable message on failure.
+     */
+    suspend fun fetchLogo(url: okhttp3.HttpUrl): ByteArray = suspendCancellableCoroutine { continuation ->
+        val client = client()
+        val call = client.newCall(Request.Builder().url(url).header("User-Agent", USER_AGENT).build())
+        continuation.invokeOnCancellation { call.cancel() }
+        call.enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                if (continuation.isActive) continuation.resumeWithException(e)
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                try {
+                    val bytes = response.use {
+                        if (!it.isSuccessful) throw IOException("HTTP ${it.code}")
+                        it.body?.byteStream()?.use { stream -> stream.readNBytesCompat(MAX_LOGO_BYTES) }
+                            ?: throw IOException("Empty logo body")
+                    }
+                    if (continuation.isActive) continuation.resume(bytes)
+                } catch (e: Exception) {
+                    if (continuation.isActive) continuation.resumeWithException(e)
+                }
+            }
+        })
+    }
+
+    /**
+     * A subscription URL without a scheme means https; hosts serving plain http spell it
+     * out themselves (and the manifest allows cleartext for exactly that).
+     */
+    private fun normalizeUrl(rawUrl: String): String {
+        val trimmed = rawUrl.trim()
+        return if (trimmed.startsWith("http://", ignoreCase = true) || trimmed.startsWith("https://", ignoreCase = true)) {
+            trimmed
+        } else {
+            "https://$trimmed"
+        }
+    }
+
+    private fun java.io.InputStream.readNBytesCompat(limit: Int): ByteArray {
+        val buffer = java.io.ByteArrayOutputStream()
+        val chunk = ByteArray(64 * 1024)
+        var total = 0
+        while (true) {
+            val read = read(chunk)
+            if (read < 0) break
+            total += read
+            if (total > limit) throw IOException("Subscription body too large")
+            buffer.write(chunk, 0, read)
+        }
+        return buffer.toByteArray()
+    }
+
+    /** The link host of a subscription URL — the fallback display name. */
+    fun hostNameOf(rawUrl: String): String = try {
+        normalizeUrl(rawUrl).toUri().host ?: rawUrl
+    } catch (_: Exception) {
+        rawUrl
+    }
+}

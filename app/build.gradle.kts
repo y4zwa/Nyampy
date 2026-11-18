@@ -17,7 +17,7 @@ plugins {
 }
 
 android {
-    namespace = "slop.miho.chumpy"
+    namespace = "dev.yazwa.nyampy"
     compileSdk = libs.versions.compileSdk.get().toInt()
 
     // The build's own number: every invocation that assembles a release APK takes the
@@ -147,8 +147,8 @@ kotlin {
 // being replaced cannot silently keep the wrong bytes, and an old commit keeps fetching
 // the AAR it was built against. A checkout without network can drop the AAR into
 // app/libs by hand; the digest still decides whether it may be used.
-val coreAarSha256 = "4d8377560c630368baa6c019a1f7c54b61e9af1e4fe09dfe0dd755d041afe2e1"
-val coreAarUrl = "https://github.com/y4zwa/Nyampy/releases/download/core-1.19.34-2/nyampycore.aar"
+val coreAarSha256 = "7dbb31b5d42f9e876e1e93cd240f20a7cb6a7b4f59616afb23d1c9f14b5ccefb"
+val coreAarUrl = "https://github.com/y4zwa/Nyampy/releases/download/core-1.19.34-3/nyampycore.aar"
 val coreAar = layout.projectDirectory.file("libs/nyampycore.aar")
 
 fun coreAarDigest(file: java.io.File): String? {

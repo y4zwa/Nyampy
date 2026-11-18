@@ -1,0 +1,42 @@
+package dev.yazwa.nyampy.core;
+
+import dev.yazwa.nyampy.core.ITunnelCallback;
+import dev.yazwa.nyampy.core.IDelayResult;
+
+interface ITunnelService {
+    /**
+     * Brings the VPN up (or reloads the running core in place) using the config file the
+     * UI process wrote to the core directory. Asynchronous; progress arrives via callbacks.
+     */
+    void connect();
+
+    void disconnect();
+
+    /** Wall-clock millis of the last transition to UP, 0 when down (survives UI restarts). */
+    long connectedAtMillis();
+
+    long[] trafficBytes();
+
+    /**
+     * Measures the real delay through the given complete Xray config (one tested outbound,
+     * no inbounds) in the core process. The callback receives -1 on failure.
+     */
+    void measureDelay(String configJson, String testUrl, IDelayResult result);
+
+    /**
+     * Measures the delay through the *running* core's tunnel, fetching [testUrl] through
+     * the live proxy outbound. Returns millis, or -1 when the core is not running.
+     */
+    long measureLiveDelay(String testUrl);
+
+    /** The mihomo core version string, for the about screen. */
+    String coreVersion();
+
+    /** The core's own captured log tail, oldest first — the viewer's whole text. */
+    String coreLogs();
+
+    /** Registers a listener; it immediately receives the current state. */
+    void registerCallback(ITunnelCallback callback);
+
+    void unregisterCallback(ITunnelCallback callback);
+}

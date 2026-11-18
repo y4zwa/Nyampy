@@ -211,7 +211,7 @@
             so it stands even from a cold start.
         -->
         <receiver
-            android:name="slop.miho.chumpy.core.UpdateActionReceiver"
+            android:name="dev.yazwa.nyampy.core.UpdateActionReceiver"
             android:exported="false" />
 
         <!--

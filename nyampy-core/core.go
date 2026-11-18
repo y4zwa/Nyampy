@@ -11,12 +11,14 @@ import (
 	"io"
 	"net/netip"
 	"os"
+	"runtime/debug"
 	"strings"
 	"sync"
 
 	"github.com/metacubex/mihomo/config"
 	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/hub"
+	L "github.com/metacubex/mihomo/listener"
 	LC "github.com/metacubex/mihomo/listener/config"
 	"github.com/metacubex/mihomo/listener/sing_tun"
 	"github.com/metacubex/mihomo/log"
@@ -25,14 +27,24 @@ import (
 )
 
 var (
-	mu       sync.Mutex
-	listener io.Closer
-	logOnce  sync.Once
-	logRing  = newRing(1000, 48*1024)
+	mu          sync.Mutex
+	tunListener io.Closer
+	configured  bool
+	logOnce     sync.Once
+	logRing     = newRing(1000, 48*1024)
 )
 
-// Version reports the mihomo build stamped into the binary (ldflags -X).
+// Version reports the mihomo version the AAR was built against. The build info is the
+// source of truth: mihomo's own constant defaults to "1.10.0" and only carries the real
+// tag when the gomobile build passes -X, which is easy to forget.
 func Version() string {
+	if info, ok := debug.ReadBuildInfo(); ok {
+		for _, dep := range info.Deps {
+			if dep.Path == "github.com/metacubex/mihomo" && dep.Version != "" && dep.Version != "(devel)" {
+				return strings.TrimPrefix(dep.Version, "v")
+			}
+		}
+	}
 	return C.Version
 }
 
@@ -77,6 +89,9 @@ func Configure(path string) error {
 		return err
 	}
 	hub.ApplyConfig(parsed)
+	// From here a stop must take the document's local inbounds down too, not only the
+	// TUN: mihomo's hub leaves mixed-port listening after the config is applied.
+	configured = true
 	return nil
 }
 
@@ -96,13 +111,25 @@ func patch(raw *config.RawConfig) {
 //
 // gateway is "172.19.0.1/30" (comma-separated for v4+v6), dns is the hijack
 // target ("any"), stack is "gvisor", "system" or "mixed".
-func StartTun(fd int, mtu int, stack, gateway, portal, dns string) error {
+func StartTun(fd int, mtu int, stack, gateway, dns string) error {
 	mu.Lock()
 	defer mu.Unlock()
 
-	if listener != nil {
-		_ = listener.Close()
-		listener = nil
+	// The descriptor is a dup owned by the core: close it on every path that fails
+	// before sing-tun takes it. Once New is called, the listener owns the fd and its
+	// own error path closes it.
+	fdOwned := false
+	defer func() {
+		if !fdOwned {
+			if file := os.NewFile(uintptr(fd), "tun-fd"); file != nil {
+				_ = file.Close()
+			}
+		}
+	}()
+
+	if tunListener != nil {
+		_ = tunListener.Close()
+		tunListener = nil
 	}
 
 	tunStack, ok := C.StackTypeMapping[strings.ToLower(stack)]
@@ -129,11 +156,9 @@ func StartTun(fd int, mtu int, stack, gateway, portal, dns string) error {
 
 	var hijack []string
 	for _, raw := range strings.Split(dns, ",") {
-		raw = strings.TrimSpace(raw)
-		if raw == "" {
-			continue
+		if address := withDefaultPort(raw, "53"); address != "" {
+			hijack = append(hijack, address)
 		}
-		hijack = append(hijack, raw+":53")
 	}
 
 	options := LC.Tun{
@@ -153,26 +178,34 @@ func StartTun(fd int, mtu int, stack, gateway, portal, dns string) error {
 		log.Debugln("TUN options: %s", string(verbose))
 	}
 
+	fdOwned = true
 	created, err := sing_tun.New(options, tunnel.Tunnel)
 	if err != nil {
 		log.Errorln("TUN: %s", err.Error())
 		return err
 	}
-	listener = created
+	tunListener = created
 	log.Infoln("TUN: attached on fd %d (stack %s)", fd, stack)
 	return nil
 }
 
-// StopTun detaches the TUN listener, leaving the tunnel config loaded.
+// StopTun detaches the TUN listener and takes the document's local inbounds down.
+// mihomo keeps the mixed-port listener running after the TUN goes, so a stopped VPN
+// would otherwise leave an open unauthenticated proxy on 127.0.0.1 until the process
+// dies. The config itself stays loaded; the next Configure rebuilds the inbounds.
 func StopTun() error {
 	mu.Lock()
 	defer mu.Unlock()
-	if listener != nil {
-		err := listener.Close()
-		listener = nil
-		return err
+	var first error
+	if tunListener != nil {
+		first = tunListener.Close()
+		tunListener = nil
 	}
-	return nil
+	if configured {
+		L.ReCreateMixed(0, tunnel.Tunnel)
+		configured = false
+	}
+	return first
 }
 
 // UpNow returns the current upload rate counter.

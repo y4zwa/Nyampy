@@ -15,7 +15,7 @@ Nyampycore.setHome(dir)          // куда mihomo складывает geodata
 Nyampycore.setLogLevel("info")
 Nyampycore.subscribe()           // начать собирать лог в кольцо
 Nyampycore.configure(path)       // загрузить config.yaml
-Nyampycore.startTun(fd, mtu, "gvisor", "172.19.0.1/30", "", "any")
+Nyampycore.startTun(fd, mtu, "gvisor", "172.19.0.1/30", "any")
 Nyampycore.stopTun()
 Nyampycore.upTotal()             // байты на отправку, кумулятивно
 Nyampycore.downTotal()           // байты на приём, кумулятивно
@@ -40,7 +40,9 @@ go install golang.org/x/mobile/cmd/gomobile@latest
 go get -tool golang.org/x/mobile/cmd/gobind@latest
 gomobile init
 gomobile bind "-target=android/arm64,android/arm,android/amd64" `
-  "-androidapi=26" "-tags=with_gvisor,cmfa" "-ldflags=-s -w" "-o=nyampycore.aar" "."
+  "-androidapi=26" "-tags=with_gvisor,cmfa" `
+  "-ldflags=-s -w -X github.com/metacubex/mihomo/constant.Version=1.19.34 -extldflags=-Wl,-z,max-page-size=16384" `
+  "-o=nyampycore.aar" "."
 ```
 
 Оба тега обязательны. `with_gvisor` даёт sing_tun gvisor-стек. `cmfa` переключает

@@ -34,7 +34,7 @@ Traffic counters cover the whole tunnel, DIRECT included.
 ./gradlew :app:assembleRelease
 ```
 
-The first build downloads the prebuilt core AAR from the pinned `core-1.19.34-2`
+The first build downloads the prebuilt core AAR from the pinned `core-1.19.34-3`
 GitHub release (sha256-checked) into `app/libs/`. Without network, put
 `nyampycore.aar` there by hand — the digest still decides whether it may be used.
 
@@ -49,5 +49,5 @@ GitHub release (sha256-checked) into `app/libs/`. Without network, put
 
 ## License
 
-GPL-3.0 — see [LICENSE](LICENSE). The fork links the Mihomo core, which is GPL-3.0;
-upstream Chumpy was MIT.
+GPL-3.0 - see [LICENSE](LICENSE). The fork links the Mihomo core, which is GPL-3.0;
+upstream Chumpy was MIT, and its notice is kept in [NOTICE](NOTICE).

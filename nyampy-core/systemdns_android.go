@@ -15,9 +15,16 @@ import (
 func SetSystemDNS(servers string) {
 	var list []string
 	for _, raw := range strings.Split(servers, ",") {
-		if server := strings.TrimSpace(raw); server != "" {
+		if server := withDefaultPort(raw, "53"); server != "" {
 			list = append(list, server)
 		}
 	}
+	// An empty hand-over means "no network known yet": keep the previous resolvers
+	// rather than turning the system nameserver into an empty list.
+	if len(list) == 0 {
+		return
+	}
 	dns.UpdateSystemDNS(list)
+	// The resolver caches the old network's answers; a handover must not keep them.
+	dns.FlushCacheWithDefaultResolver()
 }

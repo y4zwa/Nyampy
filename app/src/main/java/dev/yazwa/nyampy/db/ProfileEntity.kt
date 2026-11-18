@@ -1,0 +1,253 @@
+package dev.yazwa.nyampy.db
+
+import androidx.room.Entity
+import androidx.room.ForeignKey
+import androidx.room.Index
+import androidx.room.PrimaryKey
+import java.security.MessageDigest
+
+/** Proxy protocol kinds a profile can carry; the name is what the Xray config uses. */
+enum class ProfileType {
+    VMESS,
+    VLESS,
+    TROJAN,
+    SHADOWSOCKS,
+    SOCKS,
+    WIREGUARD,
+    HYSTERIA2,
+    TUIC,
+    ANYTLS,
+    SNELL,
+    MIERU,
+    SUDOKU,
+    SHADOWQUIC,
+    TRUSTTUNNEL,
+
+    /** Not a server: a routing balancer over the subscription's other profiles. */
+    BALANCER,
+    HTTP,
+}
+
+/**
+ * One server, imported from a subscription link or a manual paste. The columns follow the
+ * link formats' own vocabulary (transport in `network`/`host`/`path`, security in
+ * `security`/`sni`/…), flat and denormalized on purpose: a profile is always read whole,
+ * and updates replace the whole set of rows for a subscription.
+ */
+@Entity(
+    tableName = "profiles",
+    foreignKeys = [
+        ForeignKey(
+            entity = SubscriptionEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["subscriptionId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index("subscriptionId")],
+)
+data class ProfileEntity(
+    @PrimaryKey val id: String,
+    /** Owning subscription, or null for a manually pasted profile. */
+    val subscriptionId: String?,
+    val type: ProfileType,
+    val remarks: String = "",
+    /** Position within the subscription, kept stable across updates. */
+    val order: Long = 0,
+    /**
+     * The share link the profile was born from, verbatim — the row menu's copy hands
+     * it back word for word, the way it came in. Null for everything that is not a
+     * link: raw configs, Clash files, balancers.
+     */
+    val sourceLink: String? = null,
+
+    // Endpoint and authentication.
+    val server: String = "",
+    val serverPort: Int = 0,
+    /** VMess UUID, VLESS id, Trojan/SS/Hy2 password, SOCKS pass. */
+    val password: String = "",
+    /** SS cipher; VMess security; VLESS encryption. */
+    val method: String = "",
+    /** SOCKS user. */
+    val username: String = "",
+
+    // Transport.
+    val network: String = "tcp",
+    val headerType: String = "",
+    val host: String = "",
+    val path: String = "",
+    /** KCP seed. */
+    val seed: String = "",
+    /** gRPC service name. */
+    val serviceName: String = "",
+    /** gRPC authority. */
+    val authority: String = "",
+    /** gRPC multi / XHTTP mode. */
+    val mode: String = "",
+    /** XHTTP extra JSON, passed through verbatim. */
+    val xhttpExtra: String? = null,
+
+    // TLS / REALITY.
+    /** "", "tls" or "reality". */
+    val security: String = "",
+    val sni: String = "",
+    /** Comma-separated ALPN list, as links carry it. */
+    val alpn: String = "",
+    val fingerprint: String = "",
+    val flow: String = "",
+    val allowInsecure: Boolean = false,
+    val tlsTrustCertificate: String? = null,
+    /** REALITY public key (WireGuard peer key on WIREGUARD profiles). */
+    val publicKey: String = "",
+    val shortId: String = "",
+    val spiderX: String = "",
+
+    // Hysteria2.
+    val obfsPassword: String = "",
+    val portHopping: String = "",
+    val portHoppingInterval: String = "",
+    val hysteriaUpMbps: Int? = null,
+    val hysteriaDownMbps: Int? = null,
+
+    // WireGuard.
+    val wgSecretKey: String = "",
+    val wgPresharedKey: String = "",
+    /** Comma-separated interface addresses. */
+    val wgLocalAddress: String = "",
+    val wgMtu: Int = 0,
+    /** "1,2,3"-style client reserved bytes. */
+    val wgReserved: String = "",
+    /** The peer's persistent keepalive, seconds; 0 leaves the core's default. */
+    val wgKeepalive: Int = 0,
+    /**
+     * The AmneziaWG knobs the .conf carried — jc/jmin/jmax, s1-s4, h1-h4, i1-i5 and the
+     * v3.1 block — as a JSON object the config writer feeds to the core's
+     * `amnezia-wg-option`. Empty for plain WireGuard.
+     */
+    val wgAmnezia: String = "",
+
+    // Balancer (BALANCER profiles only).
+    /** The Xray strategy: random, roundrobin, leastping or leastload. */
+    val balancerStrategy: String = "",
+    /** The members' linkKeys, newline-joined; resolved against the subscription's rows. */
+    val balancerMembers: String = "",
+
+    // Routing (profiles imported from raw configs).
+    /**
+     * The routing rules the panel's own config carried, as a raw JSON array — BetterExclave's
+     * profileRoutingRules. The panel's intent for its servers: bypass lists, ad and QUIC
+     * blocks, BT direct. Rewritten onto this session's tags at build time; empty when the
+     * config carried nothing usable.
+     */
+    val routingRules: String = "",
+    val geodataSources: String = "",
+
+    /**
+     * The original Clash proxy map, minus name/type/server/port, as JSON. The typed
+     * columns cover what the UI edits and what links carry; this keeps every key a
+     * panel's YAML had, so exotic options (plugin-opts, ech-opts, mux, snell obfs,
+     * sudoku tables) survive an import/emit round trip untouched.
+     */
+    val extraOptions: String = "",
+
+    /**
+     * BetterExclave's hidden: the row is the balancer's internal, not a server to show —
+     * an aggregator config's outbounds, all of them, the moment the config's balancer
+     * survives. The row stays in the store (the balancer's members resolve by linkKey;
+     * a solo config naming the same server un-hides it), only the list omits it.
+     */
+    val hidden: Boolean = false,
+
+    // Measurements.
+    /** The last real ping through the core, in millis; null when never measured. */
+    val testDelayMillis: Long? = null,
+    val lastTestAt: Long? = null,
+    /**
+     * When the row was last picked as the profile a connect uses; null when never.
+     * A state like the ping, not a trait like the port — it rides the row's identity
+     * through subscription updates, and never enters the link key.
+     */
+    val lastUsedAt: Long? = null,
+
+    /**
+     * The pin the row menu drives: pinned rows stand the list's ground floor, first
+     * whatever the panel's order says. A state like the ping, not a trait like the
+     * port — it rides the row's identity through subscription updates, and never
+     * enters the link key.
+     */
+    val pinned: Boolean = false,
+
+    /**
+     * The user's own hide — the row menu's "Hide": the row stays in the store but the
+     * list keeps it out of sight, the header's chip holding the count and the door back.
+     * A state like the pin, not a trait like the port — it rides the row's identity
+     * through subscription updates, and never enters the link key. Not the balancer's
+     * own [hidden]: that one is the parser's plumbing, this one is the user's choice.
+     */
+    val concealed: Boolean = false,
+
+    /**
+     * A digest of everything that defines the server. Subscription updates diff on it: a
+     * profile whose linkKey survives an update keeps its identity, its selection state and
+     * its last ping.
+     */
+    val linkKey: String = "",
+)
+
+/** The canonical digest used for update diffing; see [linkKey]. */
+fun ProfileEntity.computeLinkKey(): String {
+    // A balancer is its name and its strategy, not its members: the panel reshuffles the
+    // members between updates, and the balancer — its row's identity, the selection
+    // riding on it — is meant to survive that, as BetterExclave's by-name updates do.
+    val canonical = if (type == ProfileType.BALANCER) {
+        listOf(type.name, remarks, balancerStrategy)
+    } else {
+        listOf(
+            type.name,
+            server,
+            serverPort.toString(),
+            password,
+            method,
+            username,
+            network,
+            headerType,
+            host,
+            path,
+            seed,
+            serviceName,
+            authority,
+            mode,
+            xhttpExtra.orEmpty(),
+            security,
+            sni,
+            alpn,
+            fingerprint,
+            flow,
+            allowInsecure.toString(),
+            publicKey,
+            shortId,
+            spiderX,
+            obfsPassword,
+            portHopping,
+            portHoppingInterval,
+            wgSecretKey,
+            wgPresharedKey,
+            wgLocalAddress,
+            wgMtu.toString(),
+            wgReserved,
+            extraOptions,
+            ) + listOfNotNull(
+                wgKeepalive.takeIf { it > 0 }?.let { "wgKeepalive:$it" },
+                wgAmnezia.takeIf { it.isNotEmpty() }?.let { "wgAmnezia:$it" },
+            tlsTrustCertificate?.let { "tlsTrustCertificate:$it" },
+            hysteriaUpMbps?.let { "hysteriaUpMbps:$it" },
+            hysteriaDownMbps?.let { "hysteriaDownMbps:$it" },
+        )
+    }.joinToString("\u0001")
+    val digest = MessageDigest.getInstance("SHA-256").digest(canonical.toByteArray(Charsets.UTF_8))
+    return digest.joinToString("") { "%02x".format(it) }
+}
+
+/** The balancer's member linkKeys, in column order. */
+val ProfileEntity.balancerMemberKeys: List<String>
+    get() = balancerMembers.split('\n').filter { it.isNotBlank() }
