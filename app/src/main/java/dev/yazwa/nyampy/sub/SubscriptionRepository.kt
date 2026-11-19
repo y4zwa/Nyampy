@@ -263,8 +263,10 @@ class SubscriptionRepository(
     suspend fun generateWarp(fresh: Boolean = false): Result<Int> = withContext(Dispatchers.IO) {
         runCatching {
             val store = WarpAccountStore(context)
-            if (fresh) store.clear()
-            val account = store.load()
+            // A fresh registration only replaces the stored device once the new one has
+            // actually been minted: clearing first would leave the group with no account
+            // at all if the API happened to be down.
+            val account = (if (fresh) null else store.load())
                 ?: WarpClient.register().getOrThrow().also(store::save)
             val drafts = WarpGenerator.build(account)
             db.withTransaction {

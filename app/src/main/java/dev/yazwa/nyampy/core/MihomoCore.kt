@@ -322,12 +322,18 @@ object MihomoCore {
 
     /**
      * Delay through the *running* tunnel: the core probes the proxy it currently
-     * carries, the same request its own url-test would send.
+     * carries, the same request its own url-test would send. [timeoutMillis] bounds the
+     * probe — the warm-up hands it its own remaining budget so a dead node costs that
+     * budget once instead of once per attempt.
      */
-    fun measureLiveDelay(testUrl: String): Long {
+    fun measureLiveDelay(testUrl: String, timeoutMillis: Long = PROBE_TIMEOUT_MS.toLong()): Long {
         if (!isRunning) return -1L
         return try {
-            Nyampycore.liveDelay(LIVE_PROXY_NAME, testUrl.ifEmpty { ClashConfig.DEFAULT_TEST_URL }, PROBE_TIMEOUT_MS.toLong()).toLong()
+            Nyampycore.liveDelay(
+                LIVE_PROXY_NAME,
+                testUrl.ifEmpty { ClashConfig.DEFAULT_TEST_URL },
+                timeoutMillis.coerceIn(500L, PROBE_TIMEOUT_MS.toLong()),
+            ).toLong()
         } catch (e: Exception) {
             log(Log.WARN, "liveDelay failed", e)
             -1L

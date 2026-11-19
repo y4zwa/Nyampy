@@ -13,7 +13,9 @@ import java.math.BigInteger
  * coordinate is little-endian, and the field is 2^255 - 19.
  */
 object X25519 {
-    private val P = BigInteger.TWO.pow(255) - BigInteger.valueOf(19)
+    // BigInteger.TWO is Java 9 and reaches Android only at API 33; minSdk here is 26.
+    private val TWO: BigInteger = BigInteger.valueOf(2)
+    private val P = TWO.pow(255) - BigInteger.valueOf(19)
     private val A24 = BigInteger.valueOf(121665)
     private val BASE_POINT = ByteArray(32).also { it[0] = 9 }
 
@@ -70,7 +72,7 @@ object X25519 {
             x2 = x3
             z2 = z3
         }
-        return encodeLittleEndian(x2.multiply(z2.modPow(P.subtract(BigInteger.TWO), P)).mod(P))
+        return encodeLittleEndian(x2.multiply(z2.modPow(P.subtract(TWO), P)).mod(P))
     }
 
     private fun decodeLittleEndian(bytes: ByteArray): BigInteger = BigInteger(1, bytes.reversedArray())

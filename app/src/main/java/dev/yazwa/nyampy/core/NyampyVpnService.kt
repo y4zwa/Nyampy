@@ -805,8 +805,11 @@ class NyampyVpnService : VpnService() {
         val url = ConnectionStore.current(this).delayTestUrl
         val deadline = System.currentTimeMillis() + WARM_UP_BUDGET_MILLIS
         while (true) {
-            if (MihomoCore.measureLiveDelay(url) >= 0) return
-            if (System.currentTimeMillis() >= deadline) break
+            val remaining = deadline - System.currentTimeMillis()
+            if (remaining <= 0) break
+            // The probe may spend the whole remaining budget: a dead node then costs
+            // the budget once, not once per attempt.
+            if (MihomoCore.measureLiveDelay(url, timeoutMillis = remaining) >= 0) return
             if (Thread.currentThread().isInterrupted) return
         }
         Log.w(TAG, "Warm-up: the tunnel answered nothing within $WARM_UP_BUDGET_MILLIS ms")
