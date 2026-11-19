@@ -23,6 +23,9 @@ enum class ProfileType {
     SHADOWQUIC,
     TRUSTTUNNEL,
 
+    /** mihomo's WARP-over-HTTP/2-or-QUIC outbound; an EC keypair, not a WireGuard one. */
+    MASQUE,
+
     /** Not a server: a routing balancer over the subscription's other profiles. */
     BALANCER,
     HTTP,

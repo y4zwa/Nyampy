@@ -44,11 +44,15 @@ object ClashConfig {
     const val DEFAULT_TEST_URL = "https://www.gstatic.com/generate_204"
 
     /**
-     * The TUN the VpnService establishes: 172.19.0.1/30 (v4) and fd00:19::1/126 (v6,
-     * matching the service's own constants), every DNS query hijacked. mihomo takes the
-     * addresses as a comma-separated list of prefixes.
+     * The TUN the VpnService establishes: 172.19.0.1/30, IPv4 only — the service builds
+     * no IPv6 address, so the core must not claim one either. mihomo takes the addresses
+     * as a comma-separated list of prefixes.
+     *
+     * IPv6 was carried here until 2026-11-19: apps that latch onto the second family —
+     * the Google app above all — resolved AAAA, hung on those destinations and declared
+     * themselves offline while the browser quietly fell back to v4.
      */
-    const val GATEWAY = "172.19.0.1/30,fd00:19::1/126"
+    const val GATEWAY = "172.19.0.1/30"
     const val DNS_HIJACK = "any"
     const val TUN_MTU = 1500
 
@@ -169,8 +173,11 @@ object ClashConfig {
             y.item(2, "DOMAIN-SUFFIX,$region,$DIRECT_TAG")
             y.item(2, "GEOIP,$region,$DIRECT_TAG")
         }
-        // QUIC on UDP 443 would slip past the sniffer; keep the session on TCP.
-        y.item(2, "AND,((NETWORK,UDP),(DST-PORT,443)),$REJECT_TAG")
+        // QUIC is left alone on purpose. Rejecting UDP/443 used to keep the session on
+        // TCP, but a hard reject is what a browser reads as a broken QUIC handshake: it
+        // then shows ERR_QUIC_PROTOCOL_ERROR instead of quietly falling back — Google
+        // Search and the Google app were the first places that surfaced it. The sniffer
+        // carries QUIC (`sniff.QUIC` above), so HTTP/3 still gets its domain routing.
         // "lan" is the core's own short-circuit — it matches every private range before any
         // database is touched. "private" is a .dat-only category and never matches in mmdb
         // mode, which would send the whole LAN through the server.
@@ -569,6 +576,11 @@ object ClashConfig {
                 emitTls(y, profile, sniKey = "sni", tlsFlag = false)
             }
 
+            // MASQUE is the core's own dialect, and the panel's map is already in it:
+            // the keypair, the SNI and the transport ride along in extraOptions and are
+            // written there untouched. Nothing here has a column of its own.
+            ProfileType.MASQUE -> Unit
+
             ProfileType.BALANCER -> error("a balancer is not an outbound")
         }
     }
@@ -589,6 +601,7 @@ object ClashConfig {
         ProfileType.SUDOKU -> "sudoku"
         ProfileType.SHADOWQUIC -> "shadowquic"
         ProfileType.TRUSTTUNNEL -> "trusttunnel"
+        ProfileType.MASQUE -> "masque"
         ProfileType.BALANCER -> error("a balancer is not an outbound")
     }
 
@@ -680,6 +693,8 @@ object ClashConfig {
             ProfileType.SUDOKU -> setOf("key")
             ProfileType.SHADOWQUIC -> setOf("username", "password") + tls
             ProfileType.TRUSTTUNNEL -> setOf("username", "password") + tls
+            // Every other key is the core's own vocabulary: pass the map through.
+            ProfileType.MASQUE -> common
             ProfileType.BALANCER -> emptySet()
         }
     }

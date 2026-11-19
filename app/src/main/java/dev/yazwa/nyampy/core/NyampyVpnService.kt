@@ -111,14 +111,20 @@ class NyampyVpnService : VpnService() {
          */
         private const val AUTO_RECONNECT_ATTEMPT_CAP = 3
 
+        /**
+         * How long a fresh tunnel gets to answer its first request before the session is
+         * announced anyway. A healthy profile answers in a hundred milliseconds; a
+         * WireGuard endpoint spends a round trip on its handshake, and the first request
+         * of a session lands exactly there.
+         */
+        private const val WARM_UP_BUDGET_MILLIS = 6_000L
+
         const val ACTION_CONNECT = "dev.yazwa.nyampy.core.CONNECT"
         const val ACTION_DISCONNECT = "dev.yazwa.nyampy.core.DISCONNECT"
 
         /** The TUN's own address; the core receives everything routed into it. */
         private const val TUN_ADDRESS = "172.19.0.1"
         private const val TUN_PREFIX = 30
-        private const val TUN_IPV6_ADDRESS = "fd00:19::1"
-        private const val TUN_IPV6_PREFIX = 126
         private const val TUN_MTU = 1500
 
         /**
@@ -542,6 +548,14 @@ class NyampyVpnService : VpnService() {
                 MihomoCore.startLoop(config, tun, CoreConfigFile.snapshot(this)?.localProxy?.authentication.orEmpty())
                     ?.let { throw it }
                 if (generation != commandGeneration.get()) return@execute
+                // The fd is the tunnel at the OS level the moment the core takes it, but
+                // the outbound handshake has not happened yet: a request that lands in
+                // that window fails, and some apps take the failure personally — the
+                // Google app latches onto "you are offline" and stays there until it is
+                // restarted, which reads exactly like a dead tunnel. The session is only
+                // announced once a request has come back through it.
+                warmUpTunnel()
+                if (generation != commandGeneration.get()) return@execute
                 MihomoCore.publish(TunnelStatus(TunnelState.UP))
                 // The guards ride with the running tunnel: handovers under it re-dial it,
                 // and the authorization check catches the revoke a ROM never reports.
@@ -736,18 +750,20 @@ class NyampyVpnService : VpnService() {
     }
 
     private fun establishTun(appFilter: Pair<Boolean, Set<String>>, bypassLan: Boolean): ParcelFileDescriptor? {
+        // IPv4 only. An IPv6 address on the tun hands every app a second family to reach
+        // the internet by, and the ones that latch onto it — the Google app above all —
+        // hang on destinations their own DNS resolved to AAAA while everything else
+        // quietly falls back to v4. The browser copes, the Google app declares itself
+        // offline and stays there. Other clients default to a v4-only tun for this very
+        // reason; the core's own document is `ipv6: false` already, so nothing is lost.
         val builder = Builder()
             .setMtu(TUN_MTU)
             .addAddress(TUN_ADDRESS, TUN_PREFIX)
-            .addAddress(TUN_IPV6_ADDRESS, TUN_IPV6_PREFIX)
             .apply {
                 if (bypassLan) {
                     ROUTED_IP_BLOCKS.forEach { (address, prefix) -> addRoute(address, prefix) }
-                    // Global unicast only, so local IPv6 discovery and private LAN stay local.
-                    addRoute("2000::", 3)
                 } else {
                     addRoute("0.0.0.0", 0)
-                    addRoute("::", 0)
                 }
             }
             .addDnsServer("1.1.1.1")
@@ -776,6 +792,24 @@ class NyampyVpnService : VpnService() {
             }
         }
         return builder.establish()
+    }
+
+    /**
+     * Whether the tunnel actually passes traffic yet: a real request through the proxy
+     * the core just started, retried until it answers or the budget is spent. A dead
+     * node wastes the budget and is still announced — the user's own hand can then see
+     * it is dead through the ping chip, which is better than a tunnel that claims to be
+     * up and silently blackholes every app.
+     */
+    private fun warmUpTunnel() {
+        val url = ConnectionStore.current(this).delayTestUrl
+        val deadline = System.currentTimeMillis() + WARM_UP_BUDGET_MILLIS
+        while (true) {
+            if (MihomoCore.measureLiveDelay(url) >= 0) return
+            if (System.currentTimeMillis() >= deadline) break
+            if (Thread.currentThread().isInterrupted) return
+        }
+        Log.w(TAG, "Warm-up: the tunnel answered nothing within $WARM_UP_BUDGET_MILLIS ms")
     }
 
     private fun closeTun() {

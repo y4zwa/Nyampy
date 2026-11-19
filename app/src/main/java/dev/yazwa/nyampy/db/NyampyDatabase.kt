@@ -88,9 +88,13 @@ abstract class ProfileDao {
     @Query("SELECT COUNT(*) FROM profiles")
     abstract suspend fun count(): Int
 
-    /** The manual (subscription-less) profile count, as a flow — the setup gate watches it. */
+    /** The manual (subscription-less) profile count, as a flow - the setup gate watches it. */
     @Query("SELECT COUNT(*) FROM profiles WHERE subscriptionId IS NULL AND hidden = 0")
     abstract fun manualCount(): Flow<Int>
+
+    /** How many rows one group holds — the WARP section's own count. */
+    @Query("SELECT COUNT(*) FROM profiles WHERE subscriptionId IS :subscriptionId AND hidden = 0")
+    abstract fun countFor(subscriptionId: String?): Flow<Int>
 }
 
 /**

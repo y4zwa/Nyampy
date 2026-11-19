@@ -162,6 +162,78 @@ class ClashYamlParserTest {
     }
 
     @Test
+    fun `anchors aliases and merge keys resolve into nodes`() {
+        // The shape a WARP generator writes: one shared block, one alias per node.
+        val yaml = """
+            warp-common: &warp-common
+              type: wireguard
+              private-key: cHJpdmF0ZS1rZXk=
+              public-key: cHVibGljLWtleQ==
+              ip: 172.16.0.2
+              reserved: [225, 139, 2]
+              mtu: 1280
+              dns: [1.1.1.1]
+              amnezia-wg-option: &amnezia
+                jc: 4
+                i1: <b 0x0102>
+            i1-default: &i1-default <b 0xc1>
+            proxies:
+            - name: nl
+              <<: *warp-common
+              server: nl.example.org
+              port: 4500
+            - name: de
+              <<: *warp-common
+              server: de.example.org
+              port: 500
+              mtu: 1300
+            - name: aliased
+              <<: *warp-common
+              server: al.example.org
+              port: 2408
+              amnezia-wg-option:
+                jc: 4
+                i1: *i1-default
+        """.trimIndent()
+        val profiles = ClashYamlParser.parse(yaml)!!
+        assertEquals(3, profiles.size)
+        val nl = profiles[0]
+        assertEquals(ProfileType.WIREGUARD, nl.type)
+        assertEquals("cHJpdmF0ZS1rZXk=", nl.wgSecretKey)
+        assertEquals("cHVibGljLWtleQ==", nl.publicKey)
+        assertEquals("225,139,2", nl.wgReserved)
+        assertEquals(1280, nl.wgMtu)
+        assertEquals("""{"jc":"4","i1":"<b 0x0102>"}""", nl.wgAmnezia)
+        // The node's own key beats the block it merged in…
+        assertEquals(1300, profiles[1].wgMtu)
+        // …and an alias inside a nested map keeps the value it pointed at.
+        assertEquals("""{"jc":"4","i1":"<b 0xc1>"}""", profiles[2].wgAmnezia)
+    }
+
+    @Test
+    fun `a masque entry keeps the core's own keys`() {
+        val yaml = """
+            proxies:
+            - name: mq
+              type: masque
+              server: 162.159.198.2
+              port: 443
+              sni: 4pda.to
+              private-key: MHcCAQEEI
+              public-key: MFkwEwYHKoZIzj0CAQYI
+              network: h2
+        """.trimIndent()
+        val p = ClashYamlParser.parse(yaml)!!.single()
+        assertEquals(ProfileType.MASQUE, p.type)
+        assertEquals("h2", p.network)
+        assertTrue(p.extraOptions.contains("\"sni\":\"4pda.to\""))
+        assertTrue(p.extraOptions.contains("\"private-key\":\"MHcCAQEEI\""))
+
+        // Without the keypair there is no tunnel: the entry is not worth a row.
+        assertNull(ClashYamlParser.parse("proxies:\n- name: mq\n  type: masque\n  server: 1.2.3.4\n  port: 443\n"))
+    }
+
+    @Test
     fun `SubscriptionParser hands clash yaml through`() {
         // ws paths and server names carry no "://", so the body reaches the reader raw.
         val yaml = "proxies:\n$realityEntry\nproxy-groups:\n- name: PROXY\n  type: select\nrules:\n- MATCH,PROXY\n"

@@ -458,6 +458,7 @@ fun MainShell(viewModel: MainViewModel) {
                     update = update,
                     statsFlow = viewModel.stats,
                     manualProfileCount = viewModel.manualProfileCount,
+                    warpProfileCount = viewModel.warpProfileCount,
                     uiSettings = settings,
                     connection = viewModel.connection.collectAsStateWithLifecycle().value,
                     coreVersion = viewModel.coreVersion.collectAsStateWithLifecycle().value,
@@ -496,6 +497,13 @@ fun MainShell(viewModel: MainViewModel) {
                             viewModel.addSubscription(url, name, done)
                         }
                     },
+                    // The generator registers its own network calls, so the local
+                    // network permission is asked the same way a manual add is.
+                    onGenerateWarp = { fresh, done ->
+                        activity?.withLocalNetworkPermission {
+                            viewModel.generateWarp(fresh = fresh, onDone = done)
+                        }
+                    },
                     onDeleteSubscription = viewModel::deleteSubscription,
                     onDeleteManualProfile = viewModel::deleteManualProfile,
                     onTogglePinned = viewModel::toggleProfilePinned,
@@ -526,6 +534,7 @@ fun MainShell(viewModel: MainViewModel) {
                     // The standalone group's row count, the same way: only the SERVERS page
                     // ever reads it.
                     manualProfileCount = viewModel.manualProfileCount,
+                    warpProfileCount = viewModel.warpProfileCount,
                     uiSettings = settings,
                     connection = viewModel.connection.collectAsStateWithLifecycle().value,
                     coreVersion = viewModel.coreVersion.collectAsStateWithLifecycle().value,
@@ -564,6 +573,13 @@ fun MainShell(viewModel: MainViewModel) {
                     onAddSubscription = { url, name, done ->
                         activity?.withLocalNetworkPermission {
                             viewModel.addSubscription(url, name, done)
+                        }
+                    },
+                    // The generator registers its own network calls, so the local
+                    // network permission is asked the same way a manual add is.
+                    onGenerateWarp = { fresh, done ->
+                        activity?.withLocalNetworkPermission {
+                            viewModel.generateWarp(fresh = fresh, onDone = done)
                         }
                     },
                     onDeleteSubscription = viewModel::deleteSubscription,
@@ -756,6 +772,7 @@ private fun ShellDestinationPage(
     update: UpdateUiState,
     statsFlow: StateFlow<StatsUiState>,
     manualProfileCount: StateFlow<Int>,
+    warpProfileCount: StateFlow<Int>,
     uiSettings: UiSettings,
     connection: dev.yazwa.nyampy.data.ConnectionSettings,
     coreVersion: String?,
@@ -774,6 +791,7 @@ private fun ShellDestinationPage(
     onUpdateSubscription: () -> Unit,
     onSelectSubscription: (String) -> Unit,
     onAddSubscription: (url: String, name: String?, onDone: (String?) -> Unit) -> Unit,
+    onGenerateWarp: (fresh: Boolean, onDone: (String?) -> Unit) -> Unit,
     onDeleteSubscription: (String) -> Unit,
     onDeleteManualProfile: (String) -> Unit,
     onTogglePinned: (String, Boolean) -> Unit,
@@ -816,12 +834,14 @@ private fun ShellDestinationPage(
                     // arrives — the page would compose twice on every open.
                     .collectAsStateWithLifecycle(initialValue = initialWeek)
                 val manualCount by manualProfileCount.collectOnStageAsState()
+                val warpCount by warpProfileCount.collectOnStageAsState()
                 ServersScreen(
                     subscriptions = subscriptions,
                     selectedSubscription = selectedSubscription,
                     state = servers,
                     week = week,
                     manualCount = manualCount,
+                    warpCount = warpCount,
                     flagStyle = uiSettings.flagStyle,
                     tunnelUp = tunnelStatus.state == TunnelState.UP,
                     onUpdate = onUpdateSubscription,
@@ -829,6 +849,7 @@ private fun ShellDestinationPage(
                     onPingServer = onPingServer,
                     onSelectSubscription = onSelectSubscription,
                     onAddSubscription = onAddSubscription,
+                    onGenerateWarp = onGenerateWarp,
                     onDeleteSubscription = onDeleteSubscription,
                     onDeleteManualProfile = onDeleteManualProfile,
                     onTogglePinned = onTogglePinned,
@@ -900,6 +921,7 @@ private fun TwoPaneShell(
     update: UpdateUiState,
     statsFlow: StateFlow<StatsUiState>,
     manualProfileCount: StateFlow<Int>,
+    warpProfileCount: StateFlow<Int>,
     uiSettings: UiSettings,
     connection: dev.yazwa.nyampy.data.ConnectionSettings,
     coreVersion: String?,
@@ -919,6 +941,7 @@ private fun TwoPaneShell(
     onUpdateSubscription: () -> Unit,
     onSelectSubscription: (String) -> Unit,
     onAddSubscription: (url: String, name: String?, onDone: (String?) -> Unit) -> Unit,
+    onGenerateWarp: (fresh: Boolean, onDone: (String?) -> Unit) -> Unit,
     onDeleteSubscription: (String) -> Unit,
     onDeleteManualProfile: (String) -> Unit,
     onTogglePinned: (String, Boolean) -> Unit,
@@ -992,6 +1015,7 @@ private fun TwoPaneShell(
                     update = update,
                     statsFlow = statsFlow,
                     manualProfileCount = manualProfileCount,
+                    warpProfileCount = warpProfileCount,
                     uiSettings = uiSettings,
                     connection = connection,
                     coreVersion = coreVersion,
@@ -1011,6 +1035,7 @@ private fun TwoPaneShell(
                     onUpdateSubscription = onUpdateSubscription,
                     onSelectSubscription = onSelectSubscription,
                     onAddSubscription = onAddSubscription,
+                    onGenerateWarp = onGenerateWarp,
                     onDeleteSubscription = onDeleteSubscription,
                     onDeleteManualProfile = onDeleteManualProfile,
                     onTogglePinned = onTogglePinned,
@@ -1074,6 +1099,7 @@ private fun MainPagerStrip(
     update: UpdateUiState,
     statsFlow: StateFlow<StatsUiState>,
     manualProfileCount: StateFlow<Int>,
+    warpProfileCount: StateFlow<Int>,
     uiSettings: UiSettings,
     connection: dev.yazwa.nyampy.data.ConnectionSettings,
     coreVersion: String?,
@@ -1093,6 +1119,7 @@ private fun MainPagerStrip(
     onUpdateSubscription: () -> Unit,
     onSelectSubscription: (String) -> Unit,
     onAddSubscription: (url: String, name: String?, onDone: (String?) -> Unit) -> Unit,
+    onGenerateWarp: (fresh: Boolean, onDone: (String?) -> Unit) -> Unit,
     onDeleteSubscription: (String) -> Unit,
     onDeleteManualProfile: (String) -> Unit,
     onTogglePinned: (String, Boolean) -> Unit,
@@ -1202,6 +1229,7 @@ private fun MainPagerStrip(
                     update = update,
                     statsFlow = statsFlow,
                     manualProfileCount = manualProfileCount,
+                    warpProfileCount = warpProfileCount,
                     uiSettings = uiSettings,
                     connection = connection,
                     coreVersion = coreVersion,
@@ -1220,6 +1248,7 @@ private fun MainPagerStrip(
                     onUpdateSubscription = onUpdateSubscription,
                     onSelectSubscription = onSelectSubscription,
                     onAddSubscription = onAddSubscription,
+                    onGenerateWarp = onGenerateWarp,
                     onDeleteSubscription = onDeleteSubscription,
                     onDeleteManualProfile = onDeleteManualProfile,
                     onTogglePinned = onTogglePinned,

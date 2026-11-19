@@ -10,6 +10,14 @@ import androidx.room.PrimaryKey
 const val STANDALONE_SUBSCRIPTION_ID = "standalone"
 
 /**
+ * The WARP group's id: the configs the app registers and generates for itself live under
+ * it, so they stand in the list as their own section next to the pasted ones and the
+ * panels' own. Like the standalone group it has no row in the subscriptions table — no
+ * URL, nothing to fetch, nothing for WorkManager to refresh.
+ */
+const val WARP_SUBSCRIPTION_ID = "warp"
+
+/**
  * One subscription: a URL whose body is a set of server links, plus the metadata panels
  * attach via response headers — traffic counters and expiry from `subscription-userinfo`,
  * the display name from `profile-title`/`content-disposition`, the refresh hint from

@@ -12,9 +12,10 @@ import dev.yazwa.nyampy.db.computeLinkKey
  * The Clash YAML subscription dialect: a `proxies:` list of proxy maps, the format panels
  * serve to Clash-flavoured clients. Supported inline rules are converted to Xray rules.
  *
- * The YAML is read by a deliberately small block parser (mappings, sequences, one-level
- * nesting, quoted scalars, flow lists, comments) — the subset clash proxy lists actually
- * use. Null means "not this dialect".
+ * The YAML is read by a deliberately small block parser (mappings, sequences, quoted
+ * scalars, flow lists, comments, and the anchors/aliases/merge keys generators lean on
+ * to keep a big config short) — the subset clash proxy lists actually use. Null means
+ * "not this dialect".
  */
 object ClashYamlParser {
     private val PROXIES_KEY = Regex("""(?m)^[ \t]*(?:proxies|"proxies"|'proxies')[ \t]*:""")
@@ -56,6 +57,9 @@ object ClashYamlParser {
             "shadowquic" -> ProfileType.SHADOWQUIC
             "trusttunnel" -> ProfileType.TRUSTTUNNEL
             "wireguard" -> ProfileType.WIREGUARD
+            // mihomo's own WARP dialect: WireGuard over HTTP/2 or QUIC, with an EC
+            // keypair instead of a Curve25519 one. Clash never had it, panels do.
+            "masque" -> ProfileType.MASQUE
             else -> return null
         }
         val server = proxy["server"] as? String ?: return null
@@ -152,6 +156,17 @@ object ClashYamlParser {
                 )
             }
 
+            // MASQUE is the core's own shape already: an EC keypair, a SNI and a
+            // transport. Nothing to fold into a column — the whole map rides along in
+            // extraOptions and the writer hands it to the core as it came.
+            ProfileType.MASQUE -> {
+                if ((proxy["private-key"] as? String).isNullOrBlank() ||
+                    (proxy["public-key"] as? String).isNullOrBlank()
+                ) {
+                    return null
+                }
+            }
+
             else -> return null
         }
 
@@ -180,6 +195,9 @@ object ClashYamlParser {
             network = when {
                 type == ProfileType.HYSTERIA2 -> "hysteria"
                 type == ProfileType.WIREGUARD -> "tcp"
+                // MASQUE's transport is the core's own key, and it defaults to QUIC.
+                type == ProfileType.MASQUE ->
+                    ((proxy["network"] as? String) ?: "quic").lowercase()
                 type == ProfileType.MIERU ->
                     ((proxy["transport"] as? String) ?: "TCP").lowercase()
                 else -> when (val net = proxy["network"] as? String) {
@@ -201,7 +219,10 @@ object ClashYamlParser {
             fingerprint = (proxy["client-fingerprint"] as? String).orEmpty(),
             alpn = (proxy["alpn"] as? List<*>)?.joinToString(",") { it.toString() } ?: "",
             allowInsecure = (proxy["skip-cert-verify"] as? String).equals("true", ignoreCase = true),
-            publicKey = (reality?.get("public-key") as? String).orEmpty(),
+            // REALITY's public key shares its column with a WireGuard peer's: only a
+            // document that actually carries REALITY may overwrite what the branch
+            // above wrote, or a WireGuard import would lose its key.
+            publicKey = if (reality != null) (reality["public-key"] as? String).orEmpty() else profile.publicKey,
             shortId = (reality?.get("short-id") as? String).orEmpty(),
             extraOptions = proxyExtraOptions(proxy),
         )
@@ -269,8 +290,14 @@ object ClashYamlParser {
 
 /**
  * The block-YAML subset clash proxy lists use: mappings and sequences nested by
- * indentation, quoted and plain scalars, flow lists, comments. A `- key: value` item
- * opens a map whose first line is the content at the column it starts on.
+ * indentation, quoted and plain scalars, flow lists, comments, anchors and merge keys.
+ * A `- key: value` item opens a map whose first line is the content at the column it
+ * starts on.
+ *
+ * Anchors are what a generator writes to keep a hundred-node config short: a shared
+ * block is defined once as `name: &anchor` and every node pulls it in with `<<: *anchor`
+ * (YAML's merge key) or repeats a single value with `*anchor`. The values are resolved
+ * as the document is read, the way a real loader would, and the map's own keys win.
  */
 private object MiniYaml {
     private class Line(val indent: Int, val text: String)
@@ -279,7 +306,8 @@ private object MiniYaml {
         val lines = body.lines().mapNotNull(::strip).filterNot { it.text == "---" || it.text == "..." }
         if (lines.isEmpty()) return null
         require(lines.all { it.indent <= 128 }) { "YAML nesting is too deep" }
-        return block(Cursor(lines, 0), lines.first().indent)
+        val cursor = Cursor(lines, 0)
+        return block(cursor, lines.first().indent)
     }
 
     /** Blank and comment-only lines vanish; the rest keep their indent. */
@@ -313,19 +341,21 @@ private object MiniYaml {
     }
 
     private class Cursor(val lines: List<Line>, var index: Int) {
-        val line: Line get() = lines[index]
+        /** Every `&anchor` read so far; an alias can only point backwards, as in YAML. */
+        val anchors = HashMap<String, Any?>()
         fun peek(): Line? = lines.getOrNull(index)
     }
 
     private fun isSeqItem(text: String): Boolean = text == "-" || text.startsWith("- ")
 
     private fun block(cursor: Cursor, indent: Int): Any? =
-        if (isSeqItem(cursor.line.text)) sequence(cursor, indent) else mapping(cursor, indent)
+        if (isSeqItem(cursor.lines[cursor.index].text)) sequence(cursor, indent) else mapping(cursor, indent)
 
     private fun sequence(cursor: Cursor, indent: Int): List<Any?> {
         val items = mutableListOf<Any?>()
-        while (cursor.peek()?.indent == indent && isSeqItem(cursor.line.text)) {
-            val line = cursor.line
+        while (true) {
+            val line = cursor.peek() ?: break
+            if (line.indent != indent || !isSeqItem(line.text)) break
             if (line.text == "-") {
                 cursor.index++
                 items += cursor.peek()?.takeIf { it.indent > indent }?.let { block(cursor, it.indent) }
@@ -333,7 +363,7 @@ private object MiniYaml {
                 val content = line.text.removePrefix("- ")
                 if (content.startsWith("{") && content.endsWith("}")) {
                     cursor.index++
-                    items += scalar(content)
+                    items += scalar(content, cursor.anchors)
                 } else if (keyValue(content) != null) {
                     // The map opens mid-line, at the column the content starts on; the
                     // whole item line is spent as that opening.
@@ -342,7 +372,7 @@ private object MiniYaml {
                     items += mapping(cursor, virtual.indent, virtual)
                 } else {
                     cursor.index++
-                    items += scalar(content)
+                    items += scalar(content, cursor.anchors)
                 }
             }
         }
@@ -352,6 +382,7 @@ private object MiniYaml {
     /** A block mapping at [indent]; [first] is a virtual opening line from a sequence item. */
     private fun mapping(cursor: Cursor, indent: Int, first: Line? = null): LinkedHashMap<String, Any?> {
         val map = LinkedHashMap<String, Any?>()
+        val merged = ArrayList<Map<*, *>>()
         var current = first
         while (true) {
             val line = current ?: cursor.peek()?.takeIf { it.indent == indent } ?: break
@@ -360,20 +391,58 @@ private object MiniYaml {
             if (current == null) cursor.index++
             current = null
             val (key, valueText) = entry
-            map[key] = if (valueText.isEmpty()) {
+            val anchor = anchorOf(valueText)
+            val value = when {
                 // A child block below, or a sequence written at the key's own indent.
-                val next = cursor.peek()
-                when {
-                    next == null -> null
-                    next.indent > indent -> block(cursor, next.indent)
-                    next.indent == indent && isSeqItem(next.text) -> sequence(cursor, indent)
-                    else -> null
-                }
-            } else {
-                scalar(valueText)
+                anchor == null && valueText.isEmpty() -> child(cursor, indent)
+                anchor == null -> scalar(valueText, cursor.anchors)
+                anchor.second.isEmpty() -> child(cursor, indent)
+                else -> scalar(anchor.second, cursor.anchors)
+            }
+            if (anchor != null) cursor.anchors[anchor.first] = value
+            if (key == "<<") merged += mapsOf(value) else map[key] = value
+        }
+        // YAML's merge key: the map's own keys win, and an earlier source wins over a
+        // later one — which is how `<<: *common` plus a `port:` line ends up as a node.
+        for (source in merged) {
+            for ((key, value) in source) {
+                val name = key as? String ?: continue
+                if (name !in map) map[name] = value
             }
         }
         return map
+    }
+
+    /** The value under a key that carried none of its own: a block, a flush sequence or null. */
+    private fun child(cursor: Cursor, indent: Int): Any? {
+        val next = cursor.peek()
+        return when {
+            next == null -> null
+            next.indent > indent -> block(cursor, next.indent)
+            next.indent == indent && isSeqItem(next.text) -> sequence(cursor, indent)
+            else -> null
+        }
+    }
+
+    /**
+     * A `&anchor` prefix: its name, and whatever follows it — either the value itself
+     * or nothing, the child block carrying it.
+     */
+    private fun anchorOf(text: String): Pair<String, String>? {
+        if (!text.startsWith("&")) return null
+        val space = text.indexOfFirst { it.isWhitespace() }
+        return if (space < 0) {
+            text.substring(1) to ""
+        } else {
+            text.substring(1, space) to text.substring(space + 1).trim()
+        }
+    }
+
+    /** What a merge key points at: one map, or a flow list of them. */
+    private fun mapsOf(value: Any?): List<Map<*, *>> = when (value) {
+        is Map<*, *> -> listOf(value)
+        is List<*> -> value.filterIsInstance<Map<*, *>>()
+        else -> emptyList()
     }
 
     /** `key: value` — the first colon outside quotes that ends the key. */
@@ -385,15 +454,17 @@ private object MiniYaml {
         return unquote(text.substring(0, index).trim()) to rest.trim()
     }
 
-    private fun scalar(text: String): Any {
+    private fun scalar(text: String, anchors: Map<String, Any?>): Any {
+        if (text.startsWith("*")) return anchors[text.substring(1)] ?: text
         if (text.startsWith("[") && text.endsWith("]")) {
-            return splitFlow(text.substring(1, text.length - 1)).filter { it.isNotBlank() }.map { scalar(it.trim()) }
+            return splitFlow(text.substring(1, text.length - 1)).filter { it.isNotBlank() }
+                .map { scalar(it.trim(), anchors) }
         }
         if (text.startsWith("{") && text.endsWith("}")) {
             return splitFlow(text.substring(1, text.length - 1)).filter { it.isNotBlank() }.associate { entry ->
                 val colon = delimiter(entry, ':')
                 require(colon >= 0) { "Invalid YAML mapping" }
-                unquote(entry.substring(0, colon).trim()) to scalar(entry.substring(colon + 1).trim())
+                unquote(entry.substring(0, colon).trim()) to scalar(entry.substring(colon + 1).trim(), anchors)
             }
         }
         return unquote(text)

@@ -15,6 +15,7 @@ import androidx.work.workDataOf
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -23,6 +24,7 @@ import dev.yazwa.nyampy.db.NyampyDatabase
 import dev.yazwa.nyampy.db.ProfileEntity
 import dev.yazwa.nyampy.db.ProfileType
 import dev.yazwa.nyampy.db.SubscriptionEntity
+import dev.yazwa.nyampy.db.WARP_SUBSCRIPTION_ID
 import dev.yazwa.nyampy.db.balancerMemberKeys
 import dev.yazwa.nyampy.db.computeLinkKey
 import dev.yazwa.nyampy.mihomo.LocalProxy
@@ -61,10 +63,15 @@ class SubscriptionRepository(
     private val subscriptions = db.subscriptionDao()
     private val profiles = db.profileDao()
 
-    fun subscriptions(): Flow<List<SubscriptionEntity>> = subscriptions.all()
+    /** Every subscription, the WARP group's anchor row aside — that one is plumbing. */
+    fun subscriptions(): Flow<List<SubscriptionEntity>> =
+        subscriptions.all().map { rows -> rows.filterNot { it.id == WARP_SUBSCRIPTION_ID } }
 
     /** The manual (subscription-less) profile count, as a flow — the setup gate watches it. */
     val manualProfileCount: Flow<Int> = profiles.manualCount()
+
+    /** How many WARP configs the generator has stored, as a flow. */
+    val warpProfileCount: Flow<Int> = profiles.countFor(WARP_SUBSCRIPTION_ID)
 
     fun profilesOf(subscriptionId: String?): Flow<List<ProfileEntity>> =
         profiles.bySubscription(subscriptionId)
@@ -244,6 +251,47 @@ class SubscriptionRepository(
     /** Drops every standalone profile at once — the group's own delete. */
     suspend fun deleteManualProfiles() = withContext(Dispatchers.IO) {
         profiles.replaceProfiles(null, emptyList())
+    }
+
+    /**
+     * Registers a WARP device (the first time, or again when [fresh] is asked) and stores
+     * the group's rows. The account file outlives the rows: a regeneration keeps the same
+     * device and its obfuscation, so the rows come back with their identity and pings —
+     * only a "fresh" run, the account being dead, mints a new one. Returns how many
+     * servers the group holds.
+     */
+    suspend fun generateWarp(fresh: Boolean = false): Result<Int> = withContext(Dispatchers.IO) {
+        runCatching {
+            val store = WarpAccountStore(context)
+            if (fresh) store.clear()
+            val account = store.load()
+                ?: WarpClient.register().getOrThrow().also(store::save)
+            val drafts = WarpGenerator.build(account)
+            db.withTransaction {
+                // Profiles carry a foreign key to the subscriptions table, so the group
+                // needs a row of its own to hang on. It never leaves the database: the
+                // subscriptions flow filters it out, the screen draws the group from its
+                // id, and nothing ever fetches or schedules it.
+                subscriptions.upsert(
+                    SubscriptionEntity(
+                        id = WARP_SUBSCRIPTION_ID,
+                        name = "WARP",
+                        url = "",
+                        createdAt = 0,
+                        autoUpdate = false,
+                    ),
+                )
+                val old = profiles.bySubscriptionOnce(WARP_SUBSCRIPTION_ID)
+                profiles.replaceProfiles(WARP_SUBSCRIPTION_ID, stamped(drafts, WARP_SUBSCRIPTION_ID, old))
+            }
+            Log.i(TAG, "WARP group holds ${drafts.size} servers")
+            drafts.size
+        }.onFailure { logFailure("warp", null, it) }
+    }
+
+    /** The WARP group's rows, dropped whole — the group's own delete. */
+    suspend fun deleteWarpProfiles() = withContext(Dispatchers.IO) {
+        profiles.replaceProfiles(WARP_SUBSCRIPTION_ID, emptyList())
     }
 
     /** Stores a measured ping on a profile row, for the list and the home screen. */

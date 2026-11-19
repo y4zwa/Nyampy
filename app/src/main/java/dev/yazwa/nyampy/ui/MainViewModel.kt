@@ -73,6 +73,7 @@ import dev.yazwa.nyampy.sub.UpdateRelease
 import dev.yazwa.nyampy.db.ProfileEntity
 import dev.yazwa.nyampy.db.ProfileType
 import dev.yazwa.nyampy.db.STANDALONE_SUBSCRIPTION_ID
+import dev.yazwa.nyampy.db.WARP_SUBSCRIPTION_ID
 import dev.yazwa.nyampy.db.SubscriptionEntity
 import dev.yazwa.nyampy.db.balancerMemberKeys
 import dev.yazwa.nyampy.sub.SubscriptionRepository
@@ -505,18 +506,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     /** The subscription whose profiles the servers screen shows. */
     val selectedSubscriptionId: StateFlow<String?> =
-        combine(subscriptions, connection, repository.manualProfileCount) { subs, conn, manual ->
+        combine(
+            subscriptions,
+            connection,
+            repository.manualProfileCount,
+            repository.warpProfileCount,
+        ) { subs, conn, manual, warp ->
             // Deleted while selected: fall back to the first, or to nothing at all. The
-            // standalone group keeps its selection only while it has something in it.
+            // generated groups keep their selection only while they have something in them.
             conn.selectedSubscriptionId
-                ?.takeIf { id -> id == STANDALONE_SUBSCRIPTION_ID && manual > 0 || subs.any { it.id == id } }
+                ?.takeIf { id ->
+                    id == STANDALONE_SUBSCRIPTION_ID && manual > 0 ||
+                        id == WARP_SUBSCRIPTION_ID && warp > 0 ||
+                        subs.any { it.id == id }
+                }
                 ?: subs.firstOrNull()?.id
+                ?: WARP_SUBSCRIPTION_ID.takeIf { warp > 0 }
                 ?: STANDALONE_SUBSCRIPTION_ID.takeIf { manual > 0 }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     /** How many standalone configs wait outside any subscription. */
     val manualProfileCount: StateFlow<Int> =
         repository.manualProfileCount
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+
+    /** How many generated WARP configs the app keeps, its own group. */
+    val warpProfileCount: StateFlow<Int> =
+        repository.warpProfileCount
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
 
     private val _updatingSubscriptionId = MutableStateFlow<String?>(null)
@@ -528,6 +544,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 STANDALONE_SUBSCRIPTION_ID -> SubscriptionEntity(
                     id = STANDALONE_SUBSCRIPTION_ID,
                     name = app.getString(R.string.standalone_name),
+                )
+                WARP_SUBSCRIPTION_ID -> SubscriptionEntity(
+                    id = WARP_SUBSCRIPTION_ID,
+                    name = app.getString(R.string.warp_group_name),
                 )
                 else -> subs.firstOrNull { it.id == id }
             }
@@ -549,8 +569,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * or a manually imported profile. Null while the first read is still in flight.
      */
     val setupDone: StateFlow<Boolean?> =
-        combine(subscriptions, repository.manualProfileCount) { subs, manual ->
-            subs.isNotEmpty() || manual > 0
+        combine(subscriptions, repository.manualProfileCount, repository.warpProfileCount) { subs, manual, warp ->
+            subs.isNotEmpty() || manual > 0 || warp > 0
         }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     /** Home screen extras: identity chips, ping, uptime, loss. */
@@ -603,7 +623,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 .collect { (id, rows, selection) ->
                     val (requested, selectedProfileId, sortMode) = selection
                     if (requested != null && requested != id &&
-                        (requested == STANDALONE_SUBSCRIPTION_ID || subscriptions.value.any { it.id == requested })) {
+                        (requested == STANDALONE_SUBSCRIPTION_ID || requested == WARP_SUBSCRIPTION_ID ||
+                            subscriptions.value.any { it.id == requested })) {
                         return@collect
                     }
                     val (visible, concealed, totalServers) = withContext(Dispatchers.Default) {
@@ -913,6 +934,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // The standalone group has no URL to re-fetch; its rows are only ever the
         // user's own pastes.
         if (id == STANDALONE_SUBSCRIPTION_ID) return
+        // The WARP group refreshes by rebuilding its rows from the stored device — the
+        // same thing its own button does.
+        if (id == WARP_SUBSCRIPTION_ID) {
+            generateWarp()
+            return
+        }
         if (_updatingSubscriptionId.value != null) return
         _updatingSubscriptionId.value = id
         _servers.update { it.copy(isUpdating = true, error = null) }
@@ -928,15 +955,47 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** Deletes a subscription and everything it brought in — or the standalone group. */
+    /**
+     * The WARP group: registers a device on the first call and stores one row per
+     * Cloudflare endpoint, the group standing in the list like a subscription of its own.
+     * [fresh] throws the stored device away and mints a new one — the account behind it
+     * stopped working, or the obfuscation is due a new set of junk params.
+     */
+    fun generateWarp(fresh: Boolean = false, onDone: (String?) -> Unit = {}) {
+        if (_updatingSubscriptionId.value != null) return
+        _updatingSubscriptionId.value = WARP_SUBSCRIPTION_ID
+        _servers.update { it.copy(isUpdating = true, error = null) }
+        val firstConfigEver = appIsEmpty()
+        viewModelScope.launch {
+            repository.generateWarp(fresh)
+                .onSuccess { count ->
+                    _servers.update { it.copy(isUpdating = false, error = null) }
+                    // The group the configs landed in becomes the shown one, the same
+                    // "select what you just added" an import follows.
+                    ConnectionStore.update(app) {
+                        it.copy(selectedSubscriptionId = WARP_SUBSCRIPTION_ID, selectedProfileId = null)
+                    }
+                    maybeAskNotifications(firstConfigEver)
+                    onDone(if (count == 0) app.getString(R.string.import_nothing_new) else null)
+                }
+                .onFailure { error ->
+                    val message = error.message ?: app.getString(R.string.error_unknown)
+                    _servers.update { it.copy(isUpdating = false, error = message) }
+                    onDone(message)
+                }
+            _updatingSubscriptionId.value = null
+        }
+    }
+
+    /** Deletes a subscription and everything it brought in — or a generated group. */
     fun deleteSubscription(id: String) {
         viewModelScope.launch {
             configurationMutex.withLock {
                 invalidateConfiguration(subscriptionId = id)
-                if (id == STANDALONE_SUBSCRIPTION_ID) {
-                    repository.deleteManualProfiles()
-                } else {
-                    repository.deleteSubscription(id)
+                when (id) {
+                    STANDALONE_SUBSCRIPTION_ID -> repository.deleteManualProfiles()
+                    WARP_SUBSCRIPTION_ID -> repository.deleteWarpProfiles()
+                    else -> repository.deleteSubscription(id)
                 }
                 if (connection.value.selectedSubscriptionId == id) {
                     ConnectionStore.update(app) { it.copy(selectedSubscriptionId = null, selectedProfileId = null) }

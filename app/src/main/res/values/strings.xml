@@ -50,6 +50,10 @@
     <string name="subscription_expand">Switch subscription</string>
     <string name="subscription_add">Add subscription or config</string>
     <string name="standalone_name">Loose configs</string>
+    <string name="warp_group_name">WARP</string>
+    <string name="warp_generate">Generate WARP</string>
+    <string name="warp_generate_hint">Cloudflare WARP over AmneziaWG</string>
+    <string name="warp_new_account">Register a new WARP account</string>
     <string name="import_config">Import config</string>
     <string name="import_read_failed">Couldn\'t read the file</string>
     <string name="scan_qr_code">Scan QR code</string>

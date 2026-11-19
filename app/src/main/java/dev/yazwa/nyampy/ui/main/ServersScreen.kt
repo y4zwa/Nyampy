@@ -78,6 +78,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
@@ -155,6 +156,7 @@ import dev.yazwa.nyampy.data.comparator
 import dev.yazwa.nyampy.db.ProfileEntity
 import dev.yazwa.nyampy.db.ProfileType
 import dev.yazwa.nyampy.db.STANDALONE_SUBSCRIPTION_ID
+import dev.yazwa.nyampy.db.WARP_SUBSCRIPTION_ID
 import dev.yazwa.nyampy.db.SubscriptionEntity
 import dev.yazwa.nyampy.db.balancerMemberKeys
 import dev.yazwa.nyampy.ui.ServersUiState
@@ -201,6 +203,7 @@ fun ServersScreen(
     modifier: Modifier = Modifier,
     week: List<DailyTraffic> = emptyList(),
     manualCount: Int = 0,
+    warpCount: Int = 0,
     flagStyle: FlagStyle = FlagStyle.TWEMOJI,
     tunnelUp: Boolean = false,
     onUpdate: () -> Unit,
@@ -208,6 +211,7 @@ fun ServersScreen(
     onPingServer: (String) -> Unit,
     onSelectSubscription: (String) -> Unit,
     onAddSubscription: (url: String, name: String?, onDone: (String?) -> Unit) -> Unit,
+    onGenerateWarp: (fresh: Boolean, onDone: (String?) -> Unit) -> Unit = { _, done -> done(null) },
     onDeleteSubscription: (String) -> Unit,
     onDeleteManualProfile: (String) -> Unit,
     onTogglePinned: (String, Boolean) -> Unit,
@@ -411,11 +415,13 @@ fun ServersScreen(
                                     selectedId = selectedSubscription?.id,
                                     week = week,
                                     manualCount = manualCount,
+                                    warpCount = warpCount,
                                     addOpen = addOpen,
                                     addUrl = addUrl,
                                     onAddOpenChange = { addOpen = it },
                                     onAddUrlChange = { addUrl = it },
                                     onAdd = { url, onDone -> onAddSubscription(url, null, onDone) },
+                                    onGenerateWarp = onGenerateWarp,
                                     onSelect = { id ->
                                         dropdownOpen = false
                                         if (id != selectedSubscription?.id) onSelectSubscription(id)
@@ -889,10 +895,10 @@ private fun SubscriptionReportFace(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 DatabaseTile(
-                    iconRes = if (subscription.id == STANDALONE_SUBSCRIPTION_ID) {
-                        R.drawable.ic_cards_stack
-                    } else {
-                        R.drawable.ic_database
+                    iconRes = when (subscription.id) {
+                        STANDALONE_SUBSCRIPTION_ID -> R.drawable.ic_cards_stack
+                        WARP_SUBSCRIPTION_ID -> R.drawable.ic_public
+                        else -> R.drawable.ic_database
                     },
                     logoPath = subscription.logoPath.takeIf { subscription.id != STANDALONE_SUBSCRIPTION_ID },
                 )
@@ -959,10 +965,10 @@ private fun SubscriptionCompactFace(
         // and the title a full gap away.
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             DatabaseTile(
-                iconRes = if (subscription?.id == STANDALONE_SUBSCRIPTION_ID) {
-                    R.drawable.ic_cards_stack
-                } else {
-                    R.drawable.ic_database
+                iconRes = when (subscription?.id) {
+                    STANDALONE_SUBSCRIPTION_ID -> R.drawable.ic_cards_stack
+                    WARP_SUBSCRIPTION_ID -> R.drawable.ic_public
+                    else -> R.drawable.ic_database
                 },
                 logoPath = subscription?.logoPath?.takeIf { subscription.id != STANDALONE_SUBSCRIPTION_ID },
             )
@@ -1295,11 +1301,13 @@ private fun SubscriptionDropdown(
     selectedId: String?,
     week: List<DailyTraffic>,
     manualCount: Int,
+    warpCount: Int,
     addOpen: Boolean,
     addUrl: String,
     onAddOpenChange: (Boolean) -> Unit,
     onAddUrlChange: (String) -> Unit,
     onAdd: (url: String, onDone: (String?) -> Unit) -> Unit,
+    onGenerateWarp: (fresh: Boolean, onDone: (String?) -> Unit) -> Unit,
     onSelect: (String) -> Unit,
     onDeleteRequest: (SubscriptionEntity) -> Unit,
     onTogglePinned: (String, Boolean) -> Unit,
@@ -1316,16 +1324,26 @@ private fun SubscriptionDropdown(
     val density = LocalDensity.current
     // The standalone group leads the list whenever it has something in it — the cards
     // stack's own row, first above the panels' own — and stays gone entirely while it
-    // doesn't, so the list never advertises an empty pocket.
-    val groups = if (manualCount > 0) {
-        listOf(
-            SubscriptionEntity(
-                id = STANDALONE_SUBSCRIPTION_ID,
-                name = stringResource(R.string.standalone_name),
-            ),
-        ) + subscriptions
-    } else {
-        subscriptions
+    // doesn't, so the list never advertises an empty pocket. The WARP group sits right
+    // behind it for the same reason: it is the app's own, not a panel's.
+    val groups = buildList {
+        if (manualCount > 0) {
+            add(
+                SubscriptionEntity(
+                    id = STANDALONE_SUBSCRIPTION_ID,
+                    name = stringResource(R.string.standalone_name),
+                ),
+            )
+        }
+        if (warpCount > 0) {
+            add(
+                SubscriptionEntity(
+                    id = WARP_SUBSCRIPTION_ID,
+                    name = stringResource(R.string.warp_group_name),
+                ),
+            )
+        }
+        addAll(subscriptions)
     }
     // The corner radii come out of the theme's shapes as px against this density, back
     // into Dp — the seam animates that Dp, and a shape rebuilt around a new Dp is a new
@@ -1382,22 +1400,27 @@ private fun SubscriptionDropdown(
                 subscription = subscription,
                 selected = subscription.id == selectedId,
                 week = week,
-                icon = if (subscription.id == STANDALONE_SUBSCRIPTION_ID) {
-                    R.drawable.ic_cards_stack
-                } else {
-                    R.drawable.ic_database
+                icon = when (subscription.id) {
+                    STANDALONE_SUBSCRIPTION_ID -> R.drawable.ic_cards_stack
+                    WARP_SUBSCRIPTION_ID -> R.drawable.ic_public
+                    else -> R.drawable.ic_database
                 },
                 onClick = { onSelect(subscription.id) },
                 // Only a real subscription's row carries the menu — the pin, its URL,
                 // the delete that asks the heavier question. The loose configs' row
                 // owns no subscription, so it owns no menu either: its members answer
-                // their own long press in the server list below.
-                onMenuOpen = if (subscription.id == STANDALONE_SUBSCRIPTION_ID) {
+                // their own long press in the server list below. The WARP group is the
+                // app's own in the same way.
+                onMenuOpen = if (subscription.id == STANDALONE_SUBSCRIPTION_ID ||
+                    subscription.id == WARP_SUBSCRIPTION_ID
+                ) {
                     null
                 } else {
                     { onMenuHostChange(subscription.id) }
                 },
-                menu = if (subscription.id == STANDALONE_SUBSCRIPTION_ID || !hosted) {
+                menu = if (subscription.id == STANDALONE_SUBSCRIPTION_ID ||
+                    subscription.id == WARP_SUBSCRIPTION_ID || !hosted
+                ) {
                     null
                 } else {
                     RowMenu(
@@ -1440,6 +1463,106 @@ private fun SubscriptionDropdown(
                 .graphicsLayer { alpha = addDim }
                 .padding(top = addGap.coerceAtLeast(0.dp)),
         )
+        // The generator's own door, right under the invitation: the app's answer to the
+        // panels' WARP configs, and the only row here that makes configs instead of
+        // taking them. It steps aside while the URL field is open — the open face carries
+        // an import of its own, and two asks in one block read as a choice nobody asked
+        // for.
+        if (!addOpen) {
+            WarpActionRow(
+                color = colors.surfaceContainer.copy(alpha = LocalSurfaceOpacity.current),
+                onGenerate = onGenerateWarp,
+                modifier = Modifier
+                    .graphicsLayer { alpha = addDim }
+                    .padding(top = 6.dp),
+            )
+        }
+    }
+}
+
+/**
+ * The WARP door: one tap registers the device (the first time) and lays out a row per
+ * Cloudflare endpoint, the group then standing in the list like any other. The spinner
+ * rides the tap until the registration and the rows have landed.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun WarpActionRow(
+    color: Color,
+    onGenerate: (fresh: Boolean, onDone: (String?) -> Unit) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = MaterialTheme.colorScheme
+    val poke = rememberHapticPoke()
+    var generating by remember { mutableStateOf(false) }
+    // The tap rebuilds the group on the account it already has; the long press throws
+    // the device away and registers a new one — the only way to get a fresh keypair and
+    // a fresh set of junk params, which is what a node that suddenly stops answering
+    // usually needs.
+    fun generate(fresh: Boolean) {
+        if (generating) return
+        poke()
+        generating = true
+        onGenerate(fresh) { generating = false }
+    }
+    Surface(
+        shape = MaterialTheme.shapes.extraLarge,
+        color = color,
+        contentColor = colors.onSurface,
+        modifier = modifier
+            .fillMaxWidth()
+            .combinedClickable(
+                onLongClick = { generate(true) },
+                onLongClickLabel = stringResource(R.string.warp_new_account),
+                onClick = { generate(false) },
+            ),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 72.dp)
+                .padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = colors.tertiaryContainer,
+                contentColor = colors.onTertiaryContainer,
+                modifier = Modifier.size(40.dp),
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_public),
+                        contentDescription = null,
+                        modifier = Modifier.size(24.dp),
+                    )
+                }
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = stringResource(R.string.warp_generate),
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = colors.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = stringResource(R.string.warp_generate_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (generating) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(24.dp),
+                    strokeWidth = 2.dp,
+                    color = colors.primary,
+                )
+            }
+        }
     }
 }
 
@@ -2717,6 +2840,7 @@ private fun protocolLabel(profile: ProfileEntity): String? = when (profile.type)
     dev.yazwa.nyampy.db.ProfileType.SUDOKU -> "sudoku"
     dev.yazwa.nyampy.db.ProfileType.SHADOWQUIC -> "shadowquic"
     dev.yazwa.nyampy.db.ProfileType.TRUSTTUNNEL -> "trusttunnel"
+    dev.yazwa.nyampy.db.ProfileType.MASQUE -> "masque"
     // The supporting line of a balancer row is its own — see balancerStrategyLabel.
     dev.yazwa.nyampy.db.ProfileType.BALANCER -> null
 }

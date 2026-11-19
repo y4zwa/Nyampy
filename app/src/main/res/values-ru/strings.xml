@@ -50,6 +50,10 @@
     <string name="subscription_expand">Сменить подписку</string>
     <string name="subscription_add">Добавить подписку или конфиг</string>
     <string name="standalone_name">Отдельные конфиги</string>
+    <string name="warp_group_name">WARP</string>
+    <string name="warp_generate">Сгенерировать WARP</string>
+    <string name="warp_generate_hint">Cloudflare WARP через AmneziaWG</string>
+    <string name="warp_new_account">Зарегистрировать новый аккаунт WARP</string>
     <string name="import_config">Импортировать конфиг</string>
     <string name="import_read_failed">Не удалось прочитать файл</string>
     <string name="scan_qr_code">Сканировать QR-код</string>

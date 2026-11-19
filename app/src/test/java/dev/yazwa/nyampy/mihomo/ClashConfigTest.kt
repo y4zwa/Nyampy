@@ -352,6 +352,20 @@ class ClashConfigTest {
     }
 
     @Test
+    fun `masque is written as the core's own outbound`() {
+        val profile = ProfileEntity(
+            id = "", subscriptionId = null, type = ProfileType.MASQUE,
+            remarks = "mq", server = "162.159.198.2", serverPort = 443,
+            network = "h2",
+            extraOptions = """{"sni":"4pda.to","private-key":"MHcCAQEEI","public-key":"MFkwEwYHKoZIzj0CAQYI","network":"h2","ip":"172.16.0.2"}""",
+        )
+        val yaml = build(profile, RoutingMode.GLOBAL)
+        assertTrue(yaml.contains("""type: "masque""""))
+        assertTrue(yaml.contains(""""sni": "4pda.to""""))
+        assertTrue(yaml.contains(""""network": "h2""""))
+    }
+
+    @Test
     fun `panel keys are quoted too`() {
         val profile = vless().copy(extraOptions = """{"x:y":"value"}""")
         val yaml = build(profile, RoutingMode.GLOBAL)
