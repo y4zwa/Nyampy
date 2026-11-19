@@ -26,10 +26,13 @@ download-settings`) and the whole server would fail to start.
 
 ## IPv6
 
-The tunnel carries an IPv6 address and route, but the core runs with `ipv6: false` and
-DNS with `dns.ipv6: false`: AAAA answers are never requested, so v6 traffic cannot
-escape around the proxy. That is leak prevention, not v6 tunnelling — v6-only services
-will not work.
+The tunnel carries an IPv6 address and route (`2000::/3` into the tun), and the core runs
+with `ipv6: false` while DNS runs with `dns.ipv6: false`. That pair is leak prevention,
+not a v6 switch: queries that reach the core's own resolver (port 53) get an empty AAAA
+answer, and v6 traffic is routed into the tunnel, never around the proxy. An app or the
+system resolver that asks over DoT/DoH still gets real AAAA records, so v6-only services
+do work — as long as the exit server itself has IPv6. Whether they open says nothing
+about the client: it depends on the server you picked.
 
 Traffic counters cover the whole tunnel, DIRECT included.
 
