@@ -52,6 +52,7 @@
     <string name="standalone_name">Отдельные конфиги</string>
     <string name="warp_group_name">WARP</string>
     <string name="warp_generate">Сгенерировать WARP</string>
+    <string name="welcome_warp">Использовать WARP</string>
     <string name="warp_generate_hint">Cloudflare WARP через AmneziaWG</string>
     <string name="warp_new_account">Зарегистрировать новый аккаунт WARP</string>
     <string name="import_config">Импортировать конфиг</string>

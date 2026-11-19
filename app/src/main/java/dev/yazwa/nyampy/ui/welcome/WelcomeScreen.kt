@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.Icon
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -77,11 +78,15 @@ import dev.yazwa.nyampy.ui.theme.NyampyTheme
 fun WelcomeScreen(
     onAddSubscription: (url: String, name: String?, onDone: (String?) -> Unit) -> Unit,
     onImport: (text: String, onDone: (String?) -> Unit) -> Unit,
+    onGenerateWarp: (onDone: (String?) -> Unit) -> Unit = { done -> done(null) },
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     var url by remember { mutableStateOf("") }
     var adding by remember { mutableStateOf(false) }
+    // The WARP door registers a device and lays out a group of its own: no URL, no file,
+    // the one way in that asks the user for nothing.
+    var warpGenerating by remember { mutableStateOf(false) }
 
     // The snackbar shows whatever the add/import reported; "—" only if it said nothing.
     fun reportError(error: String?) {
@@ -218,6 +223,19 @@ fun WelcomeScreen(
                     onImport = { context.externalAction { filePicker.launch(arrayOf("*/*")) } },
                     onScan = { qrScanner.launch(Intent(context, ScannerActivity::class.java)) },
                 )
+                // The zero-config door: a Cloudflare WARP account registered on the spot,
+                // its group laid out under Warp in the subscriptions list.
+                WarpWelcomeRow(
+                    generating = warpGenerating,
+                    onGenerate = {
+                        if (warpGenerating) return@WarpWelcomeRow
+                        warpGenerating = true
+                        onGenerateWarp { error ->
+                            warpGenerating = false
+                            reportError(error)
+                        }
+                    },
+                )
                 dev.yazwa.nyampy.ui.components.PhoneImportAction(initialFocus = true) { text, done ->
                     onAddSubscription(text, null, done)
                 }
@@ -242,6 +260,56 @@ fun WelcomeScreen(
  * scanner takes a code off the camera. The card itself doesn't press; its tiles are the
  * buttons, the toggle tile's own twins down to the press dip and click pop.
  */
+/**
+ * The WARP card, the import card's own anatomy: the title on the left, the door on the
+ * right. The door is a single tile — the work behind it is one tap, not a choice — and
+ * it trades places with a spinner while the registration and the group are on their way.
+ */
+@Composable
+private fun WarpWelcomeRow(
+    generating: Boolean,
+    onGenerate: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        shape = MaterialTheme.shapes.extraLarge,
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier.padding(start = 24.dp, end = 16.dp, top = 12.dp, bottom = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = stringResource(R.string.welcome_warp),
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+                Text(
+                    text = stringResource(R.string.warp_generate_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (generating) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(24.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            } else {
+                ActionTile(
+                    icon = R.drawable.ic_public,
+                    label = stringResource(R.string.warp_generate),
+                    onClick = onGenerate,
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun ImportConfigRow(
     onImport: () -> Unit,

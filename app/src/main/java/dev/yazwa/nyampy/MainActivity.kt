@@ -145,6 +145,7 @@ class MainActivity : ControllerActivity() {
                                     withLocalNetworkPermission { viewModel.addSubscription(url, name, done) }
                                 },
                                 onImport = viewModel::addManualProfiles,
+                                onGenerateWarp = { done -> viewModel.generateWarp(onDone = done) },
                             )
                         }
                     }
