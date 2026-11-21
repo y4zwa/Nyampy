@@ -1,7 +1,6 @@
 package dev.yazwa.nyampy.sub
 
 import kotlinx.serialization.json.*
-import java.security.MessageDigest
 
 /**
  * The geodata sources a subscription names: which databases its routing needs and where
@@ -19,18 +18,6 @@ internal object GeodataSources {
         "incy://routing/onadd/", "incy://routing/add/",
         "://routing/onadd/", "://routing/add/",
     )
-    private val remotePrefixes = routingPrefixes + listOf(
-        "incy://autorouting/onadd/", "incy://autorouting/add/",
-        "://autorouting/onadd/", "://autorouting/add/",
-    )
-
-    fun remoteProfileUrl(value: String): String? {
-        val trimmed = value.trim()
-        val prefix = remotePrefixes.firstOrNull { trimmed.startsWith(it, ignoreCase = true) } ?: return null
-        val payload = LinkUtils.decodeURIComponent(trimmed.substring(prefix.length))
-        return SubscriptionHeaders.webUrl(payload)
-    }
-
     fun fromRoutingBody(body: String): String = runCatching {
         val text = body.trim().removePrefix("\uFEFF")
         val prefix = routingPrefixes.firstOrNull { text.startsWith(it, ignoreCase = true) }
@@ -115,28 +102,4 @@ internal object GeodataSources {
             .also { require(it.keys.all(::validFilename)) { "Invalid geodata filename" } }
     }
 
-    fun filenameFor(url: String): String = "provider-" +
-        MessageDigest.getInstance("SHA-256").digest(url.toByteArray()).joinToString("") { "%02x".format(it) } + ".dat"
-
-    fun rewrite(rule: JsonObject, sources: String): JsonObject {
-        val files = parse(sources)
-        if (files.isEmpty()) return rule
-        return JsonObject(rule.mapValues { (key, value) ->
-            if (key !in setOf("domain", "ip", "source")) value else {
-                fun remap(element: JsonElement): JsonElement {
-                    val text = (element as? JsonPrimitive)?.contentOrNull ?: return element
-                    val name: String
-                    val category: String
-                    when {
-                        text.startsWith("geosite:") -> { name = "geosite.dat"; category = text.removePrefix("geosite:") }
-                        text.startsWith("geoip:") -> { name = "geoip.dat"; category = text.removePrefix("geoip:") }
-                        text.startsWith("ext:") -> { name = text.removePrefix("ext:").substringBefore(':'); category = text.substringAfter("ext:$name:", "") }
-                        else -> return element
-                    }
-                    return files[name]?.let { JsonPrimitive("ext:${filenameFor(it)}:$category") } ?: element
-                }
-                if (value is JsonArray) JsonArray(value.map(::remap)) else remap(value)
-            }
-        })
-    }
 }

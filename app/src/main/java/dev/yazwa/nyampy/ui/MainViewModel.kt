@@ -455,7 +455,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val pingSemaphore = Semaphore(TunnelClient.MAX_PARALLEL_DELAY_TESTS)
     private val regularPingSemaphore = Semaphore(REGULAR_PING_CONCURRENCY)
 
-
     init {
         // The app filter lives outside the config — it rides the TUN interface itself —
         // so a change to it asks for a full restart rather than a reload. The store
@@ -1378,21 +1377,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      */
     private fun observeTunnelForStats() {
         viewModelScope.launch {
+            var lastState: TunnelState? = null
             tunnelStatus
                 .distinctUntilChanged { old, new -> old.state == new.state }
                 .collect { status ->
                     when (status.state) {
                         TunnelState.UP -> {
-                            sessionStartMillis = tunnelClient.connectedAtMillis()
-                                ?: System.currentTimeMillis()
+                            // A profile or routing swap publishes CONNECTING on a live
+                            // TUN: the session did not end, its counters keep running.
+                            val continuing = lastState == TunnelState.CONNECTING && sessionStartMillis != 0L
+                            if (!continuing) {
+                                sessionStartMillis = tunnelClient.connectedAtMillis()
+                                    ?: System.currentTimeMillis()
+                            }
                             _stats.update { it.copy(frozenAtMillis = null, connectedMillis = null) }
-                            startTrafficLoop()
+                            startTrafficLoop(reset = !continuing)
                         }
+
+                        TunnelState.CONNECTING -> Unit // the reload's own state: not a fall
 
                         else -> {
                             trafficJob?.cancel()
                             // Only the first non-UP moment after a connection freezes the
-                            // graphs; the states that follow (CONNECTING after a failure and
+                            // graphs; the states that follow (DOWN after DISCONNECTING and
                             // such) must not restamp them.
                             val now = System.currentTimeMillis()
                             _stats.update { state ->
@@ -1403,8 +1410,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                             ?.let { start -> now - start },
                                 )
                             }
+                            sessionStartMillis = 0L
                         }
                     }
+                    lastState = status.state
                 }
         }
     }
@@ -1421,12 +1430,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * live until it settles. The day's bucket flushes at most once a minute; the exit
      * flush in the finally block catches the session's tail — cancellation runs it too.
      */
-    private fun startTrafficLoop() {
+    private fun startTrafficLoop(reset: Boolean = true) {
         trafficJob?.cancel()
+        val carried = _stats.value
         trafficJob = viewModelScope.launch(Dispatchers.IO) {
             var lastAtMillis = System.currentTimeMillis()
-            var sessionRx = 0L
-            var sessionTx = 0L
+            // A config swap on a live TUN keeps the session; a new connection starts
+            // its own count.
+            var sessionRx = if (reset) 0L else carried.rxTotal
+            var sessionTx = if (reset) 0L else carried.txTotal
             var bucketStart = 0L
             var bucketMillis = 0L
             var bucketDownBytes = 0L

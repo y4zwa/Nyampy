@@ -8,8 +8,7 @@ import android.content.ServiceConnection
 import android.os.IBinder
 import android.os.RemoteException
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -32,6 +31,13 @@ class TunnelClient(context: Context) {
     private var service: ITunnelService? = null
     private var bound = false
 
+    /**
+     * Completed once the ":core" binder answers. A sweep that starts before the bind
+     * settles waits here instead of turning every server into a dash.
+     */
+    @Volatile
+    private var ready = CompletableDeferred<Unit>()
+
     private val callback = object : ITunnelCallback.Stub() {
         override fun onStateChanged(state: Int, error: String?) {
             _status.value = TunnelStatus(TunnelState.fromOrdinal(state), error)
@@ -42,12 +48,14 @@ class TunnelClient(context: Context) {
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
             val remote = ITunnelService.Stub.asInterface(binder)
             service = remote
+            ready.complete(Unit)
             call(remote) { it.registerCallback(callback) }
         }
 
         override fun onServiceDisconnected(name: ComponentName) {
             // ":core" died; BIND_AUTO_CREATE brings it back and we reconnect automatically.
             service = null
+            ready = CompletableDeferred()
             _status.value = TunnelStatus()
         }
     }
@@ -66,6 +74,7 @@ class TunnelClient(context: Context) {
         service?.let { remote -> call(remote) { it.unregisterCallback(callback) } }
         context.unbindService(connection)
         service = null
+        ready = CompletableDeferred()
         bound = false
     }
 
@@ -97,11 +106,21 @@ class TunnelClient(context: Context) {
     }
 
     /**
+     * The binder, waiting for the service connection if the process has only just
+     * started. A sweep at launch may otherwise run while the bind is still in flight.
+     */
+    private suspend fun remoteService(): ITunnelService? {
+        service?.let { return it }
+        withTimeoutOrNull(5_000L) { ready.await() }
+        return service
+    }
+
+    /**
      * A real delay measurement through [configJson], performed by a one-off core instance
      * in the ":core" process. Null when unreachable.
      */
     suspend fun measureDelay(configJson: String, testUrl: String): Long? {
-        val remote = service ?: return null
+        val remote = remoteService() ?: return null
         val binder = remote.asBinder()
         val result = CompletableDeferred<Long?>()
         val deathRecipient = IBinder.DeathRecipient { result.complete(null) }
@@ -114,8 +133,10 @@ class TunnelClient(context: Context) {
             binder.linkToDeath(deathRecipient, 0)
             try {
                 remote.measureDelay(configJson, testUrl, callback)
-                // Keep the caller's permit until the native request actually finishes.
-                withContext(NonCancellable) { result.await() }
+                // The service's own probe is bounded at 5 s; a callback that never comes
+                // means the core is wedged, and the sweep must not hold its permit for
+                // ever. A late callback lands on a finished deferred and is ignored.
+                withTimeoutOrNull(20_000L) { result.await() }
             } finally {
                 binder.unlinkToDeath(deathRecipient, 0)
             }

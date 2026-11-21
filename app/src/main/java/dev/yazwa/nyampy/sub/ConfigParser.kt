@@ -274,6 +274,8 @@ object ConfigParser {
             ProfileType.VMESS -> profile = profile.copy(
                 password = user?.str("id") ?: settings.str("id") ?: return null,
                 method = user?.str("security") ?: settings.str("security") ?: "auto",
+                alterId = user?.int("alterId") ?: settings.int("alterId")
+                    ?: user?.int("aid") ?: settings.int("aid") ?: 0,
                 flow = user?.str("flow") ?: settings.str("flow").orEmpty(),
             )
 
@@ -405,6 +407,15 @@ object ConfigParser {
 
             "httpupgrade" -> stream.obj("httpupgradeSettings")?.let { up ->
                 result = result.copy(path = up.str("path").orEmpty(), host = up.str("host").orEmpty())
+            }
+
+            // Legacy Xray HTTP/1.1 and HTTP/2 transports: both keep host and path in
+            // `httpSettings` (the newer cores removed the transports, old configs remain).
+            "http", "h2" -> (stream.obj("httpSettings") ?: stream.obj("http2Settings"))?.let { http ->
+                result = result.copy(
+                    host = http.array("host")?.strings()?.joinToString(",").orEmpty(),
+                    path = http.str("path").orEmpty(),
+                )
             }
 
             "grpc" -> stream.obj("grpcSettings")?.let { grpc ->

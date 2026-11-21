@@ -28,12 +28,15 @@ open class ControllerActivity : ComponentActivity() {
     fun withLocalNetworkPermission(required: Boolean = false, action: () -> Unit) {
         if (Build.VERSION.SDK_INT < 37 || checkSelfPermission(Manifest.permission.ACCESS_LOCAL_NETWORK) == PackageManager.PERMISSION_GRANTED) {
             action()
-        } else if (pendingLocalNetwork == null) {
+        } else {
+            // Another ask is already on screen: chain this one instead of dropping it.
+            val previous = pendingLocalNetwork
             pendingLocalNetwork = { granted ->
+                previous?.invoke(granted)
                 if (granted || !required) action()
                 else Toast.makeText(this, R.string.local_network_permission_required, Toast.LENGTH_LONG).show()
             }
-            localNetworkPermission.launch(Manifest.permission.ACCESS_LOCAL_NETWORK)
+            if (previous == null) localNetworkPermission.launch(Manifest.permission.ACCESS_LOCAL_NETWORK)
         }
     }
 

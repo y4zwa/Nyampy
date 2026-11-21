@@ -1,12 +1,13 @@
 package dev.yazwa.nyampy.sub
 
 import androidx.core.net.toUri
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import okhttp3.Call
 import okhttp3.Callback
-import okhttp3.Credentials
 import okhttp3.Response
 import java.util.zip.GZIPInputStream
 import okhttp3.OkHttpClient
@@ -15,23 +16,18 @@ import java.util.concurrent.TimeUnit
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import android.net.Uri
 import java.io.IOException
-import java.net.InetSocketAddress
-import java.net.Proxy
-import dev.yazwa.nyampy.mihomo.LocalProxy
 
 /**
- * Fetches a subscription body with cancellation and an overall deadline. When the tunnel is up the
- * request goes through the running core's loopback mixed inbound - the app package is
- * excluded from the VPN routes, so this is the only way a blocked panel stays reachable
- * (the arrangement Hiddify uses, and the reason the config always listens on it).
+ * Fetches a subscription body with cancellation and an overall deadline. The request
+ * always goes out directly: updating a subscription through the tunnel made a broken or
+ * slow node take the panel down with it, and a panel that is unreachable directly is no
+ * use to an update anyway.
  *
  * Every fetch dresses up as the Happ client when the global spoof is on: the fingerprint
  * is read at fetch time, so a flip in the settings is live on the very next fetch.
  */
 class SubscriptionFetcher(
-    private val tunnelUp: () -> Boolean,
     private val happSpoof: () -> HappSpoof.Fingerprint?,
-    private val localProxy: () -> LocalProxy?,
 ) {
     private companion object {
         /**
@@ -44,6 +40,9 @@ class SubscriptionFetcher(
 
         const val CONNECT_TIMEOUT_MS = 15_000
         const val READ_TIMEOUT_MS = 30_000
+
+        /** Direct requests can be reset once by DPI; a couple of retries settle it. */
+        const val FETCH_ATTEMPTS = 3
 
         /** Panels that serve anything larger are doing something else; do not OOM the app. */
         const val MAX_BODY_BYTES = 8 * 1024 * 1024
@@ -58,23 +57,6 @@ class SubscriptionFetcher(
             .retryOnConnectionFailure(false)
             .build()
         }
-        /** The core's mixed inbound is HTTP+SOCKS; HTTP is what OkHttp authenticates. */
-        fun tunnelClient(proxy: LocalProxy): OkHttpClient =
-            directClient.newBuilder()
-                .proxy(Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", proxy.port)))
-                .proxyAuthenticator { _, response ->
-                    if (response.request.header("Proxy-Authorization") != null) null
-                    else response.request.newBuilder()
-                        .header("Proxy-Authorization", Credentials.basic(proxy.username, proxy.password))
-                        .build()
-                }
-                .build()
-    }
-
-    /** Direct when the tunnel is down; through its authenticated mixed inbound when up. */
-    private fun client(): OkHttpClient {
-        val proxy = if (tunnelUp()) localProxy() else null
-        return if (proxy != null) tunnelClient(proxy) else directClient
     }
 
     data class FetchResult(
@@ -86,20 +68,30 @@ class SubscriptionFetcher(
      * Throws [IOException] with a readable message on failure. The Happ fingerprint,
      * when the settings carry one, takes the UA and the x- headers over from the app's
      * own identity.
+     *
+     * The panel's `routing` header is metadata, not a second fetch: its geodata URLs are
+     * kept for the record only (the rules themselves arrive in the body), and a profile
+     * that names none is not an error.
      */
     suspend fun fetch(rawUrl: String): FetchResult {
-        val response = fetchResponse(rawUrl)
-        val source = response.metadata.routingProfileUrl ?: return response
-        val profile = fetchResponse(source)
-        val sources = GeodataSources.fromRoutingBody(profile.body)
-        if (sources.isEmpty()) throw IOException("Routing profile provides no geodata download URLs")
-        return response.copy(metadata = response.metadata.copy(
-            geodataSources = GeodataSources.merge(response.metadata.geodataSources, sources),
-        ))
+        var last: IOException? = null
+        repeat(FETCH_ATTEMPTS) { attempt ->
+            try {
+                return fetchResponse(rawUrl)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: IOException) {
+                // A direct panel behind DPI often resets the first request and answers
+                // the next; two quick retries turn that into a successful update.
+                last = e
+                if (attempt < FETCH_ATTEMPTS - 1) delay(300L * (attempt + 1))
+            }
+        }
+        throw last ?: IOException("Subscription fetch failed")
     }
 
     private suspend fun fetchResponse(rawUrl: String): FetchResult = suspendCancellableCoroutine { continuation ->
-        val client = client()
+        val client = directClient
         val request = Request.Builder().url(normalizeUrl(rawUrl)).get()
         val fingerprint = happSpoof()
         if (fingerprint != null) HappSpoof.headers(fingerprint).forEach { (name, value) -> request.header(name, value) }
@@ -148,8 +140,19 @@ class SubscriptionFetcher(
      * Throws [IOException] with a readable message on failure.
      */
     suspend fun fetchLogo(url: okhttp3.HttpUrl): ByteArray = suspendCancellableCoroutine { continuation ->
-        val client = client()
-        val call = client.newCall(Request.Builder().url(url).header("User-Agent", USER_AGENT).build())
+        val client = directClient
+        val builder = Request.Builder().url(url)
+        val fingerprint = happSpoof()
+        if (fingerprint != null) {
+            // The panel may gate its avatar on the Happ fingerprint like the body. The
+            // accept-encoding header is left to OkHttp so the image arrives decompressed.
+            HappSpoof.headers(fingerprint).forEach { (name, value) ->
+                if (!name.equals("accept-encoding", ignoreCase = true)) builder.header(name, value)
+            }
+        } else {
+            builder.header("User-Agent", USER_AGENT)
+        }
+        val call = client.newCall(builder.build())
         continuation.invokeOnCancellation { call.cancel() }
         call.enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {

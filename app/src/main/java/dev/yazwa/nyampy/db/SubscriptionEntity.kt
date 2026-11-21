@@ -12,8 +12,8 @@ const val STANDALONE_SUBSCRIPTION_ID = "standalone"
 /**
  * The WARP group's id: the configs the app registers and generates for itself live under
  * it, so they stand in the list as their own section next to the pasted ones and the
- * panels' own. Like the standalone group it has no row in the subscriptions table — no
- * URL, nothing to fetch, nothing for WorkManager to refresh.
+ * panels' own. The database keeps an anchor row for it — the profile foreign key needs
+ * a parent — but it has no URL, nothing to fetch and nothing for WorkManager to refresh.
  */
 const val WARP_SUBSCRIPTION_ID = "warp"
 

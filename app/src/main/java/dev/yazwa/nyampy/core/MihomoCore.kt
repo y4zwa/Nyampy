@@ -1,6 +1,7 @@
 package dev.yazwa.nyampy.core
 
 import android.content.Context
+import android.net.ConnectivityManager
 import android.os.ParcelFileDescriptor
 import android.os.RemoteCallbackList
 import android.os.RemoteException
@@ -9,9 +10,11 @@ import android.util.Log
 import androidx.core.content.edit
 import nyampycore.Nyampycore
 import java.io.File
+import java.net.Inet4Address
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import dev.yazwa.nyampy.data.AtomicSnapshot
 import dev.yazwa.nyampy.data.DailyTrafficStore
 import dev.yazwa.nyampy.mihomo.ClashConfig
 
@@ -131,6 +134,10 @@ object MihomoCore {
                 installGeoAssets()
                 Nyampycore.setHome(workDir().absolutePath)
                 Nyampycore.setLogLevel("info")
+                // A delay probe dials the proxy by its host name. Without a system
+                // resolver the core cannot reach a hostname-based server even while
+                // the phone's own DNS is fine — and no VPN start has handed it one yet.
+                primeSystemDns()
                 Nyampycore.subscribe()
                 log(Log.INFO, "mihomo ${Nyampycore.version()} environment ready")
             } catch (e: Exception) {
@@ -169,6 +176,17 @@ object MihomoCore {
         }
     }
 
+    /** The device's current resolvers, for a core that has not been configured yet. */
+    private fun primeSystemDns() {
+        val manager = appContext.getSystemService(ConnectivityManager::class.java) ?: return
+        val network = manager.activeNetwork ?: return
+        val servers = manager.getLinkProperties(network)?.dnsServers.orEmpty()
+            .filterIsInstance<Inet4Address>()
+            .mapNotNull { it.hostAddress }
+            .distinct()
+        setSystemDNS(servers)
+    }
+
     /**
      * Applies [configYaml] and, on a fresh start, attaches [tun]: blocks until the tunnel
      * is up; returns null on success or the failure to show. Must run on the worker.
@@ -187,7 +205,9 @@ object MihomoCore {
             awaitInit()
             initFailed?.let { return IllegalStateException(it) }
             val file = configFile()
-            file.writeText(configYaml)
+            // Atomic: a process death mid-write must not leave a truncated document
+            // behind for the next start to trip over.
+            AtomicSnapshot.write(file, configYaml)
             val freshStart = !isRunning
             Nyampycore.configure(file.absolutePath, authentication)
             // A config swap on a live TUN is just a reload: mihomo applies the document
@@ -214,7 +234,14 @@ object MihomoCore {
             synchronized(this) {
                 lastTotalUp = Nyampycore.upTotal()
                 lastTotalDown = Nyampycore.downTotal()
-                if (lastUiTrafficAt == 0L) lastUiTrafficAt = SystemClock.elapsedRealtime()
+                if (freshStart) {
+                    // The previous session's unread bytes belong to it, not to this one.
+                    pendingUiRx = 0L
+                    pendingUiTx = 0L
+                    lastUiTrafficAt = SystemClock.elapsedRealtime()
+                } else if (lastUiTrafficAt == 0L) {
+                    lastUiTrafficAt = SystemClock.elapsedRealtime()
+                }
             }
             // A reload keeps the session's clock: the tunnel never went down.
             if (freshStart) connectedAtMillis = System.currentTimeMillis()

@@ -3,6 +3,7 @@ package nyampycore
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/metacubex/mihomo/config"
@@ -86,6 +87,7 @@ func TestRepresentativeDocumentsParse(t *testing.T) {
 		"balancer":  balancerDocument,
 		"wireguard": wireguardDocument,
 		"xhttp":     xhttpSplitDocument,
+		"booleans":  booleanOptionDocument,
 	} {
 		t.Run(name, func(t *testing.T) { parseDocument(t, name, document) })
 	}
@@ -118,6 +120,34 @@ func TestPatchTakesTheListeningSideAway(t *testing.T) {
 	if raw.MixedPort != 10808 || raw.Mode != T.Rule || !raw.GeodataMode || len(raw.Proxy) == 0 ||
 		len(raw.Rule) == 0 || !raw.DNS.Enable || len(raw.ProxyGroup) == 0 {
 		t.Fatalf("patch dropped fields the writer emits: %+v", raw)
+	}
+}
+
+// TestPatchKeepsOnlyPemTrust: the document may carry a provider's CA for its own server
+// chain, and nothing else from its TLS section. A path (the old escape) stays out.
+func TestPatchKeepsOnlyPemTrust(t *testing.T) {
+	pem := "-----BEGIN CERTIFICATE-----\\nMIIB\\n-----END CERTIFICATE-----"
+	doc := strings.Replace(injectedDocument, "- \"./evil-ca.pem\"", "- \""+pem+"\"", 1)
+	raw, err := config.UnmarshalRawConfig([]byte(doc))
+	if err != nil {
+		t.Fatalf("UnmarshalRawConfig: %v", err)
+	}
+	if len(raw.TLS.CustomTrustCert) != 1 {
+		t.Fatalf("the test document lost its CA: %+v", raw.TLS)
+	}
+	patch(raw, "nyampy:trusted")
+	if len(raw.TLS.CustomTrustCert) != 1 ||
+		!strings.HasPrefix(raw.TLS.CustomTrustCert[0], "-----BEGIN CERTIFICATE-----") {
+		t.Fatalf("a PEM chain did not survive the patch: %+v", raw.TLS)
+	}
+
+	raw, err = config.UnmarshalRawConfig([]byte(injectedDocument))
+	if err != nil {
+		t.Fatalf("UnmarshalRawConfig: %v", err)
+	}
+	patch(raw, "nyampy:trusted")
+	if len(raw.TLS.CustomTrustCert) != 0 {
+		t.Fatalf("a path was taken as a trusted certificate: %+v", raw.TLS)
 	}
 }
 
@@ -339,6 +369,36 @@ proxies:
           X-Test: 1
         reuse-settings:
           max-concurrency: 4-8
+proxy-groups:
+  - name: PROXY
+    type: select
+    proxies:
+      - "node"
+      - DIRECT
+rules:
+  - MATCH,PROXY
+`
+
+// booleanOptionDocument is the shape the writer emits for a link's query flags: the
+// core's weakly typed decoder takes a YAML bool and refuses the string "true".
+const booleanOptionDocument = `mixed-port: 10808
+mode: rule
+log-level: warning
+ipv6: false
+geodata-mode: true
+geo-auto-update: false
+proxies:
+  - name: "node"
+    type: "tuic"
+    server: "t.example.com"
+    port: 443
+    udp: true
+    uuid: "00000000-1111-2222-3333-444444444444"
+    password: "x"
+    sni: "t.example.com"
+    reduce-rtt: true
+    disable-sni: true
+    tfo: true
 proxy-groups:
   - name: PROXY
     type: select

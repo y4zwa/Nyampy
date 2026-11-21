@@ -58,6 +58,7 @@ import dev.yazwa.nyampy.ui.components.externalAction
 import dev.yazwa.nyampy.R
 import dev.yazwa.nyampy.data.UiSettings
 import dev.yazwa.nyampy.data.Accent
+import dev.yazwa.nyampy.sub.SubscriptionLink
 import dev.yazwa.nyampy.ui.components.SubmitFieldRow
 import dev.yazwa.nyampy.ui.components.ActionTile
 import dev.yazwa.nyampy.ui.components.InfoChip
@@ -122,7 +123,10 @@ fun WelcomeScreen(
     ) { result ->
         val text = result.data?.getStringExtra(ScannerActivity.KEY_TEXT)
         if (text == null) return@rememberLauncherForActivityResult
-        if (text.startsWith("http", ignoreCase = true)) {
+        val deepLink = SubscriptionLink.parse(text)
+        if (deepLink != null) {
+            onAddSubscription(deepLink, null) { error -> reportError(error) }
+        } else if (text.startsWith("http://", ignoreCase = true) || text.startsWith("https://", ignoreCase = true)) {
             onAddSubscription(text, null) { error -> reportError(error) }
         } else {
             onImport(text) { error -> reportError(error) }
@@ -135,7 +139,13 @@ fun WelcomeScreen(
         val text = url.trim()
         if (text.isEmpty() || adding) return
         adding = true
-        if (text.startsWith("http")) {
+        val deepLink = SubscriptionLink.parse(text)
+        if (deepLink != null) {
+            onAddSubscription(deepLink, null) { error ->
+                adding = false
+                reportError(error)
+            }
+        } else if (text.startsWith("http://", ignoreCase = true) || text.startsWith("https://", ignoreCase = true)) {
             onAddSubscription(text, null) { error ->
                 adding = false
                 reportError(error)

@@ -106,8 +106,6 @@ data class UiSettings(
      */
     val grayscaleOffline: Boolean = false,
     val hapticFeedback: Boolean = true,
-    /** Whether the home screen's exit IP chip reads "Hidden"; flipped by tapping the chip. */
-    val hideIp: Boolean = false,
     /**
      * The addresses' own curtain: IPs, domains and ports never show — the dots stand
      * where they stood, in every list and on the server card. The tunnel itself keeps
@@ -227,7 +225,12 @@ object SettingsStore {
     @Synchronized
     fun update(context: Context, transform: (UiSettings) -> UiSettings) {
         val old = settings(context).value
-        val updated = transform(old)
+        var updated = transform(old)
+        // A cleared identity is reminted right here, not lazily per fetch: the panel
+        // must keep seeing one device, and a new random id on every request reads as
+        // account sharing.
+        if (updated.happUserId.isBlank()) updated = updated.copy(happUserId = HappSpoof.randomUserId())
+        if (updated.happHwid.isBlank()) updated = updated.copy(happHwid = HappSpoof.randomHwid())
         write(context, updated)
         settingsState.value = updated
         if (old.iconVariant != updated.iconVariant || old.accent != updated.accent ||
@@ -290,6 +293,11 @@ object SettingsStore {
         val identityBlank =
             prefs.getString(KEY_HAPP_USER_ID, null).isNullOrBlank() ||
                 prefs.getString(KEY_HAPP_HWID, null).isNullOrBlank()
+        // The old hard-coded versions move to the current defaults once, not on every
+        // read: a version the user typed on purpose survives.
+        val versionsMigrated = prefs.getBoolean(KEY_HAPP_VERSIONS_MIGRATED, false)
+        val storedIncyVersion = prefs.getString("incy_app_version", null).orEmpty()
+        val storedHappVersion = prefs.getString(KEY_HAPP_APP_VERSION, null).orEmpty()
         val settings = UiSettings(
             themeMode = enumEntry(prefs.getString(KEY_THEME, null), ThemeMode.SYSTEM),
             accent = enumEntry(prefs.getString(KEY_ACCENT, null), Accent.ADAPTIVE),
@@ -302,15 +310,23 @@ object SettingsStore {
             simpleTransitions = prefs.getBoolean(KEY_SIMPLE_TRANSITIONS, isWeakDevice(context)),
             grayscaleOffline = prefs.getBoolean(KEY_GRAYSCALE_OFFLINE, false),
             hapticFeedback = prefs.getBoolean(KEY_HAPTIC, true),
-            hideIp = prefs.getBoolean(KEY_HIDE_IP, false),
             maskAddresses = prefs.getBoolean(KEY_MASK_ADDRESSES, false),
             notificationsPermissionAsked = prefs.getBoolean(KEY_NOTIFICATIONS_ASKED, false),
             happSpoof = prefs.getBoolean(KEY_HAPP_SPOOF, true),
             incySpoof = prefs.getBoolean("incy_spoof", false),
-            incyAppVersion = prefs.getString("incy_app_version", null).orEmpty()
-                .let { if (it.isBlank() || it == "1.0") HappSpoof.DEFAULT_INCY_APP_VERSION else it },
-            happAppVersion = prefs.getString(KEY_HAPP_APP_VERSION, null).orEmpty()
-                .let { if (it.isBlank() || it == "3.21.1") HappSpoof.DEFAULT_APP_VERSION else it },
+            incyAppVersion = storedIncyVersion.let {
+                when {
+                    it.isBlank() -> HappSpoof.DEFAULT_INCY_APP_VERSION
+                    !versionsMigrated && it == "1.0" -> HappSpoof.DEFAULT_INCY_APP_VERSION
+                    else -> it
+                }
+            },
+            happAppVersion = storedHappVersion.let {
+                when {
+                    it.isBlank() || (!versionsMigrated && it == "3.21.1") -> HappSpoof.DEFAULT_APP_VERSION
+                    else -> it
+                }
+            },
             happOs = prefs.getString(KEY_HAPP_OS, null).orEmpty().ifBlank { "Android" },
             happOsVersion = prefs.getString(KEY_HAPP_OS_VERSION, null).orEmpty()
                 .ifBlank { HappSpoof.defaultOsVersion() },
@@ -352,7 +368,10 @@ object SettingsStore {
                 null
             },
         )
-        if (identityBlank) write(context, settings)
+        if (identityBlank || !versionsMigrated) {
+            write(context, settings)
+            prefs.edit { putBoolean(KEY_HAPP_VERSIONS_MIGRATED, true) }
+        }
         return settings
     }
 
@@ -365,7 +384,6 @@ object SettingsStore {
             .putBoolean(KEY_SIMPLE_TRANSITIONS, settings.simpleTransitions)
             .putBoolean(KEY_GRAYSCALE_OFFLINE, settings.grayscaleOffline)
             .putBoolean(KEY_HAPTIC, settings.hapticFeedback)
-            .putBoolean(KEY_HIDE_IP, settings.hideIp)
             .putBoolean(KEY_MASK_ADDRESSES, settings.maskAddresses)
             .putBoolean(KEY_NOTIFICATIONS_ASKED, settings.notificationsPermissionAsked)
             .putBoolean(KEY_HAPP_SPOOF, settings.happSpoof)
@@ -438,7 +456,6 @@ object SettingsStore {
     private const val KEY_GRAYSCALE_OFFLINE = "grayscale_offline"
     private const val KEY_HAPTIC = "haptic_feedback"
     private const val KEY_SIMPLE_TRANSITIONS = "simple_transitions"
-    private const val KEY_HIDE_IP = "hide_ip"
     private const val KEY_MASK_ADDRESSES = "mask_addresses"
     private const val KEY_NOTIFICATIONS_ASKED = "notifications_permission_asked"
 
@@ -451,6 +468,7 @@ object SettingsStore {
     private const val KEY_HAPP_LOCALE = "happ_locale"
     private const val KEY_HAPP_USER_ID = "happ_user_id"
     private const val KEY_HAPP_HWID = "happ_hwid"
+    private const val KEY_HAPP_VERSIONS_MIGRATED = "happ_versions_migrated"
     private const val KEY_FONT = "font"
     private const val KEY_FLAG_STYLE = "flag_style"
     private const val KEY_ICON_VARIANT = "icon_variant"

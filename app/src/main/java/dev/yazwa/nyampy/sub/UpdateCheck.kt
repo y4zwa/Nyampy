@@ -216,7 +216,13 @@ object UpdateCheck {
             override fun onResponse(call: Call, response: Response) {
                 try {
                     response.use {
-                        if (it.code == 416) throw IOException("Range not satisfiable")
+                        if (it.code == 416) {
+                            // The partial no longer fits the asset (a rebuilt release,
+                            // a truncated file): drop it so the next attempt starts over
+                            // instead of asking for the same impossible range forever.
+                            temp.delete()
+                            throw IOException("Range not satisfiable")
+                        }
                         if (!it.isSuccessful) throw IOException("HTTP ${it.code}")
                         // A server echoing the range keeps the partial's bytes and appends;
                         // one ignoring it starts the story over, and the fresh stream must

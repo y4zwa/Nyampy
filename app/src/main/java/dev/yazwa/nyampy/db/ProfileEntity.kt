@@ -71,6 +71,8 @@ data class ProfileEntity(
     val password: String = "",
     /** SS cipher; VMess security; VLESS encryption. */
     val method: String = "",
+    /** VMess legacy alteration count; modern AEAD servers use 0. */
+    val alterId: Int = 0,
     /** SOCKS user. */
     val username: String = "",
 
@@ -240,6 +242,9 @@ fun ProfileEntity.computeLinkKey(): String {
             wgReserved,
             extraOptions,
             ) + listOfNotNull(
+                // A legacy server keeps its identity when the aid arrives; the AEAD
+                // majority (0) keeps the hashes it had before the column existed.
+                alterId.takeIf { it > 0 }?.let { "alterId:$it" },
                 wgKeepalive.takeIf { it > 0 }?.let { "wgKeepalive:$it" },
                 wgAmnezia.takeIf { it.isNotEmpty() }?.let { "wgAmnezia:$it" },
             tlsTrustCertificate?.let { "tlsTrustCertificate:$it" },

@@ -42,7 +42,7 @@ class ClashConfigTest {
     private val TOP_LEVEL_KEYS = setOf(
         "mixed-port", "authentication", "allow-lan", "mode", "log-level", "ipv6",
         "unified-delay", "tcp-concurrent", "find-process-mode", "geodata-mode",
-        "geo-auto-update", "profile", "sniffer", "dns", "proxies", "proxy-groups", "rules",
+        "geo-auto-update", "profile", "sniffer", "dns", "tls", "proxies", "proxy-groups", "rules",
     )
 
     @Test
@@ -204,6 +204,9 @@ class ClashConfigTest {
                 .replace("\u2028", "\\u2028")
                 .replace("\u2029", "\\u2029")
             val profile = vless().copy(
+                // A trusted CA is the one TLS block the writer may emit; the rule
+                // payload must not be able to add a second one.
+                tlsTrustCertificate = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----",
                 routingRules = """[{"outboundTag":"direct","domain":["$json"],"port":"$json"}]""",
             )
             val yaml = build(profile, RoutingMode.GLOBAL)
@@ -263,8 +266,20 @@ class ClashConfigTest {
             routingRules = """[{"outboundTag":"direct","ip":["1.2.3.4"],"port":"80,443"}]""",
         )
         val yaml = build(profile, RoutingMode.GLOBAL)
-        assertTrue(yaml, yaml.contains("DST-PORT,80,443"))
+        // The core reads the payload up to the next comma: a comma-separated list would
+        // leave only its first port in the rule.
+        assertTrue(yaml, yaml.contains("DST-PORT,80/443"))
+        assertFalse(yaml, yaml.contains("DST-PORT,80,443"))
         assertTrue(yaml, yaml.contains("1.2.3.4/32"))
+    }
+
+    @Test
+    fun `a rule with a domain and an ip keeps both conditions`() {
+        val profile = vless().copy(
+            routingRules = """[{"outboundTag":"direct","domain":["full:a.example"],"ip":["1.2.3.4"]}]""",
+        )
+        val yaml = build(profile, RoutingMode.GLOBAL)
+        assertTrue(yaml, yaml.contains("AND,((DOMAIN,a.example),(IP-CIDR,1.2.3.4/32)),DIRECT"))
     }
 
     @Test
@@ -370,5 +385,246 @@ class ClashConfigTest {
         val profile = vless().copy(extraOptions = """{"x:y":"value"}""")
         val yaml = build(profile, RoutingMode.GLOBAL)
         assertTrue(yaml.contains("""x:y": "value"""))
+    }
+
+    @Test
+    fun `a boolean option from a link is written as a boolean`() {
+        val profile = vless().copy(extraOptions = """{"tfo":"1","reduce-rtt":"true"}""")
+        val yaml = build(profile, RoutingMode.GLOBAL)
+        assertTrue(yaml, yaml.contains(""""tfo": true"""))
+        assertTrue(yaml, yaml.contains(""""reduce-rtt": true"""))
+        assertFalse(yaml, yaml.contains(""""tfo": "1""""))
+        assertFalse(yaml, yaml.contains(""""reduce-rtt": "true""""))
+    }
+
+    @Test
+    fun `a panel boolean reaches the core as a boolean`() {
+        val parsed = dev.yazwa.nyampy.sub.ClashYamlParser.parse(
+            """
+            proxies:
+            - name: t
+              type: tuic
+              server: t.example.com
+              port: 443
+              uuid: 00000000-1111-2222-3333-444444444444
+              password: x
+              reduce-rtt: true
+              udp: false
+            """.trimIndent(),
+        )!!.single()
+        val yaml = build(parsed, RoutingMode.GLOBAL)
+        assertTrue(yaml, yaml.contains(""""reduce-rtt": true"""))
+        // TUIC is UDP by nature: a panel's `udp: false` cannot turn that off.
+        assertTrue(yaml, yaml.contains("udp: true"))
+        assertFalse(yaml, yaml.contains(""""reduce-rtt": "true""""))
+    }
+
+    @Test
+    fun `a clash subscription keeps its own country rules`() {
+        val parsed = dev.yazwa.nyampy.sub.ClashYamlParser.parse(
+            """
+            proxies:
+            - name: n
+              type: vless
+              server: n.example.com
+              port: 443
+              uuid: 00000000-1111-2222-3333-444444444444
+            proxy-groups:
+            - name: PROXY
+              type: select
+              proxies: [n]
+            rules:
+            - GEOIP,CN,DIRECT
+            - MATCH,PROXY
+            """.trimIndent(),
+        )!!.single()
+        val yaml = build(parsed, RoutingMode.GLOBAL, knownGeoIp = setOf("CN"))
+        assertTrue(yaml, yaml.contains("GEOIP,CN,DIRECT"))
+    }
+
+    @Test
+    fun `hysteria2 link fp is not a certificate pin`() {
+        // The link's `fp` is a browser fingerprint; Hysteria2's `fingerprint` field is a
+        // hex certificate pin, and a name there fails the whole outbound.
+        val profile = dev.yazwa.nyampy.sub.LinkParsers.parse(
+            "hy2://x@h.example.com:443?sni=h.example.com&fp=qq",
+        )!!
+        val yaml = build(profile, RoutingMode.GLOBAL)
+        assertFalse(yaml, yaml.contains("fingerprint"))
+    }
+
+    @Test
+    fun `hysteria2 hop interval is seconds, written once`() {
+        val clash = dev.yazwa.nyampy.sub.ClashYamlParser.parse(
+            """
+            proxies:
+            - name: h
+              type: hysteria2
+              server: h.example.com
+              port: 443
+              password: x
+              ports: 1000-2000
+              hop-interval: 30s
+            """.trimIndent(),
+        )!!.single()
+        val clashYaml = build(clash, RoutingMode.GLOBAL)
+        assertEquals(1, clashYaml.lines().count { it.trimStart().startsWith("hop-interval:") })
+        assertTrue(clashYaml, clashYaml.contains("""hop-interval: "30""""))
+
+        val link = dev.yazwa.nyampy.sub.LinkParsers.parse(
+            "hy2://x@h.example.com:443?mport=1000-2000&mportinterval=30s",
+        )!!
+        val linkYaml = build(link, RoutingMode.GLOBAL)
+        assertEquals(1, linkYaml.lines().count { it.trimStart().startsWith("hop-interval:") })
+        assertTrue(linkYaml, linkYaml.contains("""hop-interval: "30""""))
+    }
+
+    @Test
+    fun `a panel udp false is honoured`() {
+        val yaml = build(vless().copy(extraOptions = """{"udp":false}"""), RoutingMode.GLOBAL)
+        assertTrue(yaml, yaml.contains("udp: false"))
+    }
+
+    @Test
+    fun `httpupgrade is written as websocket with the upgrade flag`() {
+        val profile = vless().copy(network = "httpupgrade", path = "/up", host = "cdn.example.com")
+        val yaml = build(profile, RoutingMode.GLOBAL)
+        assertTrue(yaml, yaml.contains("network: ws"))
+        assertTrue(yaml, yaml.contains("v2ray-http-upgrade: true"))
+        assertTrue(yaml, yaml.contains("""path: "/up""""))
+        assertTrue(yaml, yaml.contains("""Host: "cdn.example.com""""))
+    }
+
+    @Test
+    fun `h2 keeps its network and its host`() {
+        val yaml = build(vless().copy(network = "h2", host = "h.example.com", path = "/h2"), RoutingMode.GLOBAL)
+        assertTrue(yaml, yaml.contains("network: h2"))
+        assertTrue(yaml, yaml.contains("h2-opts:"))
+        assertTrue(yaml, yaml.contains("""- "h.example.com""""))
+        assertTrue(yaml, yaml.contains("""path: "/h2""""))
+    }
+
+    @Test
+    fun `kcp keeps its seed and header`() {
+        val profile = ProfileEntity(
+            id = "", subscriptionId = null, type = ProfileType.VMESS,
+            remarks = "kcp", server = "k.example.com", serverPort = 443,
+            password = "00000000-1111-2222-3333-444444444444",
+            network = "kcp", seed = "s3cr3t", headerType = "srtp",
+        )
+        val yaml = build(profile, RoutingMode.GLOBAL)
+        assertTrue(yaml, yaml.contains("network: mkcp"))
+        assertTrue(yaml, yaml.contains("mkcp-opts:"))
+        assertTrue(yaml, yaml.contains("""seed: "s3cr3t""""))
+        assertTrue(yaml, yaml.contains("""header: "srtp""""))
+    }
+
+    @Test
+    fun `a panel xhttp map keeps its own knobs`() {
+        val profile = vless().copy(
+            network = "xhttp",
+            extraOptions = """{"xhttp-opts":{"reuse-settings":{"max-concurrency":"8-16"},"download-settings":{"server":"dl.example.com","port":8443,"tls":true}}}""",
+        )
+        val yaml = build(profile, RoutingMode.GLOBAL)
+        assertTrue(yaml, yaml.contains("\"reuse-settings\":"))
+        assertTrue(yaml, yaml.contains("\"max-concurrency\": \"8-16\""))
+        assertTrue(yaml, yaml.contains("\"download-settings\":"))
+        assertTrue(yaml, yaml.contains("\"server\": \"dl.example.com\""))
+    }
+
+    @Test
+    fun `a sing box trusted chain rides the document tls block`() {
+        val profile = vless().copy(
+            tlsTrustCertificate = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----",
+        )
+        val yaml = build(profile, RoutingMode.GLOBAL)
+        assertTrue(yaml, yaml.contains("\ntls:"))
+        assertTrue(yaml, yaml.contains("custom-certifactes:"))
+        assertTrue(yaml, yaml.contains("BEGIN CERTIFICATE"))
+    }
+
+    @Test
+    fun `a broken regex or port drops its rule, not the document`() {
+        val profile = vless().copy(
+            routingRules = """[
+                {"outboundTag":"direct","domain":["regexp:["]},
+                {"outboundTag":"direct","domain":["regexp:^a[bc]$"]},
+                {"outboundTag":"direct","ip":["1.2.3.4"],"port":"80,,443"},
+                {"outboundTag":"direct","ip":["1.2.3.4"],"port":"80-90-100"},
+                {"outboundTag":"direct","ip":["1.2.3.4"],"port":"80,443"}
+            ]""",
+        )
+        val yaml = build(profile, RoutingMode.GLOBAL)
+        assertFalse(yaml, yaml.contains("DOMAIN-REGEX,["))
+        assertTrue(yaml, yaml.contains("DOMAIN-REGEX,^a[bc]$"))
+        assertFalse(yaml, yaml.contains("80,,443"))
+        assertFalse(yaml, yaml.contains("80-90-100"))
+        assertTrue(yaml, yaml.contains("DST-PORT,80/443"))
+    }
+
+    @Test
+    fun `a negated geodata category is dropped, not written`() {
+        val profile = vless().copy(
+            routingRules = """[
+                {"outboundTag":"direct","domain":["geosite:!cn"]},
+                {"outboundTag":"direct","ip":["geoip:!cn"]},
+                {"outboundTag":"direct","source":["geoip:!cn"]},
+                {"outboundTag":"direct","domain":["geosite:cn"]}
+            ]""",
+        )
+        val yaml = build(profile, RoutingMode.GLOBAL, knownGeoSite = setOf("CN"),
+            knownGeoIp = setOf("CN"))
+        // The core has no "!" category: writing one rejects the whole document.
+        assertFalse(yaml, yaml.contains("GEOSITE,!cn"))
+        assertFalse(yaml, yaml.contains("GEOIP,!cn"))
+        assertTrue(yaml, yaml.contains("GEOSITE,cn"))
+    }
+
+    @Test
+    fun `plugin and ss boolean flags become booleans`() {
+        val parsed = dev.yazwa.nyampy.sub.ClashYamlParser.parse(
+            """
+            proxies:
+            - name: s
+              type: ss
+              server: s.example.com
+              port: 443
+              cipher: aes-128-gcm
+              password: x
+              udp-over-tcp: true
+              plugin: v2ray-plugin
+              plugin-opts:
+                mode: websocket
+                mux: true
+            """.trimIndent(),
+        )!!.single()
+        val yaml = build(parsed, RoutingMode.GLOBAL)
+        assertTrue(yaml, yaml.contains(""""udp-over-tcp": true"""))
+        assertTrue(yaml, yaml.contains(""""mux": true"""))
+        assertFalse(yaml, yaml.contains(""""udp-over-tcp": "true""""))
+    }
+
+    @Test
+    fun `a perl-only regex is dropped too`() {
+        val profile = vless().copy(
+            routingRules = """[
+                {"outboundTag":"direct","domain":["regexp:\\Qa.example\\E"]},
+                {"outboundTag":"direct","domain":["regexp:^a\\.example$"]}
+            ]""",
+        )
+        val yaml = build(profile, RoutingMode.GLOBAL)
+        assertFalse(yaml, yaml.contains("DOMAIN-REGEX,\\Q"))
+        assertTrue(yaml, yaml.contains("""DOMAIN-REGEX,^a\.example$"""))
+    }
+
+    @Test
+    fun `vmess alter id reaches the outbound`() {
+        val profile = ProfileEntity(
+            id = "", subscriptionId = null, type = ProfileType.VMESS,
+            remarks = "legacy", server = "v.example.com", serverPort = 443,
+            password = "00000000-1111-2222-3333-444444444444", alterId = 4,
+        )
+        val yaml = build(profile, RoutingMode.GLOBAL)
+        assertTrue(yaml, yaml.contains("alterId: 4"))
     }
 }

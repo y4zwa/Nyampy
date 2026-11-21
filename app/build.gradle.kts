@@ -147,8 +147,8 @@ kotlin {
 // being replaced cannot silently keep the wrong bytes, and an old commit keeps fetching
 // the AAR it was built against. A checkout without network can drop the AAR into
 // app/libs by hand; the digest still decides whether it may be used.
-val coreAarSha256 = "9934368deafee9b5f8b4c4e121f4955c1290228591d262268705281354d8f52c"
-val coreAarUrl = "https://github.com/y4zwa/Nyampy/releases/download/core-1.19.34-5/nyampycore.aar"
+val coreAarSha256 = "52dc8a80f14974e321e3538545923a1cafb4e2a9a4b5f0664f38fbbff5e477f2"
+val coreAarUrl = "https://github.com/y4zwa/Nyampy/releases/download/core-1.19.34-6/nyampycore.aar"
 val coreAar = layout.projectDirectory.file("libs/nyampycore.aar")
 
 fun coreAarDigest(file: java.io.File): String? {

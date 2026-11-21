@@ -81,6 +81,7 @@ object ClashYamlParser {
             ProfileType.VMESS -> profile = profile.copy(
                 password = proxy["uuid"] as? String ?: return null,
                 method = (proxy["cipher"] as? String) ?: "auto",
+                alterId = (proxy["alterId"] as? String)?.toIntOrNull()?.coerceIn(0, 65535) ?: 0,
             )
 
             ProfileType.TROJAN -> profile = profile.copy(
@@ -184,10 +185,8 @@ object ClashYamlParser {
             val headers = proxy["headers"]
             if (headers != null && headers != "" && headers != "{}" && headers != emptyMap<Any, Any>()) return null
             if (proxy.keys.any { it !in httpFields }) return null
-            val tls = (proxy["tls"] as? String)?.lowercase()
-            if (proxy["tls"] != null && tls !in setOf("true", "false")) return null
-            val skipVerification = (proxy["skip-cert-verify"] as? String)?.lowercase()
-            if (proxy["skip-cert-verify"] != null && skipVerification != "false") return null
+            if (proxy["tls"] != null && flag(proxy["tls"]) == null) return null
+            if (proxy["skip-cert-verify"] != null && flag(proxy["skip-cert-verify"]) == null) return null
             if (profile.username.isEmpty() && profile.password.isNotEmpty()) return null
         }
         val reality = proxy["reality-opts"] as? Map<*, *>
@@ -201,8 +200,8 @@ object ClashYamlParser {
                 type == ProfileType.MIERU ->
                     ((proxy["transport"] as? String) ?: "TCP").lowercase()
                 else -> when (val net = proxy["network"] as? String) {
-                    "ws", "websocket", "grpc", "httpupgrade", "kcp", "mkcp", "xhttp", "splithttp" -> net
-                    "h2", "http" -> "http"
+                    "ws", "websocket", "grpc", "httpupgrade", "kcp", "mkcp", "xhttp", "splithttp",
+                    "h2", "http" -> net
                     null, "", "tcp" -> "tcp"
                     else -> return null
                 }
@@ -212,13 +211,13 @@ object ClashYamlParser {
                 type == ProfileType.HYSTERIA2 || type == ProfileType.TROJAN ||
                     type == ProfileType.TUIC || type == ProfileType.ANYTLS ||
                     type == ProfileType.TRUSTTUNNEL -> "tls"
-                (proxy["tls"] as? String).equals("true", ignoreCase = true) -> "tls"
+                flag(proxy["tls"]) == true -> "tls"
                 else -> ""
             },
             sni = (proxy["servername"] as? String) ?: (proxy["sni"] as? String) ?: "",
             fingerprint = (proxy["client-fingerprint"] as? String).orEmpty(),
             alpn = (proxy["alpn"] as? List<*>)?.joinToString(",") { it.toString() } ?: "",
-            allowInsecure = (proxy["skip-cert-verify"] as? String).equals("true", ignoreCase = true),
+            allowInsecure = flag(proxy["skip-cert-verify"]) == true,
             // REALITY's public key shares its column with a WireGuard peer's: only a
             // document that actually carries REALITY may overwrite what the branch
             // above wrote, or a WireGuard import would lose its key.
@@ -263,6 +262,17 @@ object ClashYamlParser {
         null -> ""
         is List<*> -> value.joinToString(",") { it.toString() }
         else -> value.toString()
+    }
+
+    /** A YAML boolean, however the document spelled it; null when it is not one. */
+    private fun flag(value: Any?): Boolean? = when (value) {
+        is Boolean -> value
+        is String -> when (value.trim().lowercase()) {
+            "true", "1", "yes", "on" -> true
+            "false", "0", "no", "off" -> false
+            else -> null
+        }
+        else -> null
     }
 
     /** Every key the entry carried, minus the four the columns own. */

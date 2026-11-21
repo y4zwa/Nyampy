@@ -10,6 +10,7 @@ import kotlinx.serialization.json.contentOrNull
 import dev.yazwa.nyampy.db.ProfileEntity
 import dev.yazwa.nyampy.db.ProfileType
 import java.util.Locale
+import kotlin.math.roundToLong
 
 /**
  * Routing intent of a session: everything through the tunnel, or everything but the
@@ -55,6 +56,9 @@ object ClashConfig {
     const val GATEWAY = "172.19.0.1/30"
     const val DNS_HIJACK = "any"
     const val TUN_MTU = 1500
+
+    /** What a trusted CA starts with; the bridge keeps only strings that look like this. */
+    const val CERTIFICATE_PEM = "-----BEGIN CERTIFICATE-----"
 
     private const val PROBE_INTERVAL = 300
 
@@ -131,6 +135,8 @@ object ClashConfig {
             }
         }
 
+        emitTrust(y, profile)
+
         // ---------------------------------------------------------------- proxies
         y.raw(0, "proxies:")
         if (balanced) {
@@ -190,12 +196,27 @@ object ClashConfig {
         return y.toString()
     }
 
+    /**
+     * A subscription imported from sing-box may trust a provider's own CA. mihomo has
+     * no per-proxy trust store for a server chain: the global pool is the only place,
+     * and the bridge keeps that block to PEM certificates alone (the rest of the
+     * document's TLS section stays denied).
+     */
+    private fun emitTrust(y: Yaml, profile: ProfileEntity) {
+        profile.tlsTrustCertificate?.trim()?.takeIf { it.startsWith(CERTIFICATE_PEM) }?.let { certificate ->
+            y.block(0, "tls") {
+                y.items(2, "custom-certifactes", listOf(quote(certificate)))
+            }
+        }
+    }
+
     /** The one-proxy document the bridge loads for a delay measurement. */
     fun buildTest(profile: ProfileEntity, testUrl: String = DEFAULT_TEST_URL): String {
         val y = Yaml()
         y.key(0, "mode", "rule")
         y.key(0, "log-level", "warning")
         y.key(0, "ipv6", "false")
+        emitTrust(y, profile)
         y.raw(0, "proxies:")
         emitProxy(y, profile, nodeName(0))
         y.raw(0, "proxy-groups:")
@@ -242,34 +263,74 @@ object ClashConfig {
             if (rule.containsKey("protocol")) continue
             val target = targetOf(rule, fallthrough) ?: continue
 
-            val port = (rule["port"] as? JsonPrimitive)?.contentOrNull?.let(::portToken)
-            val network = (rule["network"] as? JsonPrimitive)?.contentOrNull
-                ?.split(',')
-                ?.map { it.trim().lowercase() }
-                ?.filter { it == "tcp" || it == "udp" }
-                ?.takeIf { it.size == 1 }
-                ?.first()
-
-            val primaries = mutableListOf<String>()
-            strings(rule["domain"]).forEach { domain ->
-                domainRule(domain, knownGeoSite)?.let { primaries += it }
+            // A matcher the panel wrote but the core cannot parse drops the whole rule:
+            // emitting its address half alone would quietly widen what it matches.
+            val port = when (val raw = (rule["port"] as? JsonPrimitive)?.contentOrNull) {
+                null -> null
+                else -> portToken(raw) ?: continue
             }
-            strings(rule["ip"]).forEach { ip -> ipRule(ip, knownGeoIp)?.let { primaries += it } }
-            if (primaries.isEmpty()) continue
-
-            for (primary in primaries) {
-                val conditions = mutableListOf(primary)
-                if (port != null) conditions += "DST-PORT,$port"
-                if (network != null) conditions += "NETWORK,$network"
-                out += if (conditions.size == 1) {
-                    // A lone address/country matcher needs no DNS for the destination;
-                    // the option belongs after the target, never before it. AND rules
-                    // cannot carry it per-condition, so they go without.
-                    val noResolve = primary.startsWith("IP-CIDR,") || primary.startsWith("GEOIP,")
-                    "$primary,$target" + if (noResolve) ",no-resolve" else ""
-                } else {
-                    "AND,(" + conditions.joinToString(",") { "($it)" } + "),$target"
+            val network = when (val raw = (rule["network"] as? JsonPrimitive)?.contentOrNull) {
+                null -> null
+                else -> {
+                    val protocols = raw.split(',')
+                        .map { it.trim().lowercase() }
+                        .filter { it == "tcp" || it == "udp" }
+                    when {
+                        protocols.isEmpty() -> continue
+                        // "tcp,udp" is the panel's catch-all, not a matcher.
+                        protocols.size == 2 -> null
+                        else -> protocols.first()
+                    }
                 }
+            }
+
+            val sourcePort = when (val raw = (rule["sourcePort"] as? JsonPrimitive)?.contentOrNull) {
+                null -> null
+                else -> portToken(raw) ?: continue
+            }
+
+            val rawDomains = strings(rule["domain"])
+            val rawIps = strings(rule["ip"])
+            val rawSources = strings(rule["source"])
+            val domains = rawDomains.mapNotNull { domainRule(it, knownGeoSite) }
+            val ips = rawIps.mapNotNull { ipRule(it, knownGeoIp) }
+            val sources = rawSources.mapNotNull { sourceRule(it, knownGeoIp) }
+            if (domains.isEmpty() && ips.isEmpty() && sources.isEmpty()) continue
+            // An AND rule that lost one of its halves would match more than the panel
+            // asked for; the whole rule goes instead.
+            val present = listOf(rawDomains, rawIps, rawSources).count { it.isNotEmpty() }
+            if (present > 1 && listOf(domains, ips, sources).count { it.isNotEmpty() } < present) continue
+
+            // One kind of matcher: the values are alternatives, so each gets its own
+            // rule — that also lets an address rule keep its no-resolve option. Two
+            // kinds at once are Xray's AND, and are written as one nested rule.
+            val groups = listOf(domains, ips, sources).filter { it.isNotEmpty() }
+            if (groups.size == 1) {
+                for (primary in groups.first()) {
+                    val conditions = mutableListOf(primary)
+                    if (port != null) conditions += "DST-PORT,$port"
+                    if (sourcePort != null) conditions += "SRC-PORT,$sourcePort"
+                    if (network != null) conditions += "NETWORK,$network"
+                    out += if (conditions.size == 1) {
+                        // A lone address/country matcher needs no DNS for the
+                        // destination; the option belongs after the target, never
+                        // before it. AND rules cannot carry it per-condition.
+                        val noResolve = primary.startsWith("IP-CIDR,") || primary.startsWith("GEOIP,")
+                        "$primary,$target" + if (noResolve) ",no-resolve" else ""
+                    } else {
+                        "AND,(" + conditions.joinToString(",") { "($it)" } + "),$target"
+                    }
+                }
+            } else {
+                val conditions = mutableListOf<String>()
+                groups.forEach { group ->
+                    if (group.size == 1) conditions += group.first()
+                    else conditions += "OR,(" + group.joinToString(",") { "($it)" } + ")"
+                }
+                if (port != null) conditions += "DST-PORT,$port"
+                if (sourcePort != null) conditions += "SRC-PORT,$sourcePort"
+                if (network != null) conditions += "NETWORK,$network"
+                out += "AND,(" + conditions.joinToString(",") { "($it)" } + "),$target"
             }
         }
         return out
@@ -289,17 +350,18 @@ object ClashConfig {
         if (value.isEmpty() || value.startsWith("ext:")) return null
         return when {
             value.startsWith("geosite:") -> {
-                val category = value.removePrefix("geosite:")
-                    .removePrefix("!")
-                    .substringBefore('@')
-                    .trim()
-                    .uppercase(Locale.ROOT)
+                val name = value.removePrefix("geosite:")
+                // "!" is Xray's negation; the core has no such category and refuses the
+                // whole document over it, so the rule goes instead.
+                if (name.startsWith("!")) return null
+                val category = name.substringBefore('@').trim().uppercase(Locale.ROOT)
                 if (category.isEmpty() || (knownGeoSite != null && category !in knownGeoSite)) null
-                else "GEOSITE," + value.removePrefix("geosite:")
+                else "GEOSITE,$name"
             }
             value.startsWith("domain:") -> "DOMAIN-SUFFIX," + value.removePrefix("domain:")
             value.startsWith("full:") -> "DOMAIN," + value.removePrefix("full:")
-            value.startsWith("regexp:") -> "DOMAIN-REGEX," + value.removePrefix("regexp:")
+            value.startsWith("regexp:") -> value.removePrefix("regexp:")
+                .takeIf(::safeRegex)?.let { "DOMAIN-REGEX," + it }
             value.startsWith("keyword:") -> "DOMAIN-KEYWORD," + value.removePrefix("keyword:")
             else -> "DOMAIN-SUFFIX," + value
         }
@@ -309,15 +371,16 @@ object ClashConfig {
         val value = ruleToken(raw) ?: return null
         if (value.isEmpty() || value.startsWith("ext:")) return null
         if (value.startsWith("geoip:")) {
-            val country = value.removePrefix("geoip:")
-                .removePrefix("!")
-                .trim()
-                .uppercase(Locale.ROOT)
+            val name = value.removePrefix("geoip:")
+            // "!" is Xray's negation; the core has no such category and refuses the
+            // whole document over it, so the rule goes instead.
+            if (name.startsWith("!")) return null
+            val country = name.trim().uppercase(Locale.ROOT)
             // "lan" is the core's own private-range short-circuit, not a .dat category.
             return if (country.isEmpty() || (country != "LAN" && knownGeoIp != null && country !in knownGeoIp)) {
                 null
             } else {
-                "GEOIP," + value.removePrefix("geoip:")
+                "GEOIP,$name"
             }
         }
         // Xray accepts a bare address here; IP-CIDR does not — netip.ParsePrefix would
@@ -328,6 +391,24 @@ object ClashConfig {
         // default resolution behaviour anyway.
         if (!isNumericAddress(value)) return null
         return "IP-CIDR," + withHostPrefix(value)
+    }
+
+    private fun sourceRule(raw: String, knownGeoIp: Set<String>?): String? {
+        val value = ruleToken(raw) ?: return null
+        if (value.isEmpty() || value.startsWith("ext:")) return null
+        if (value.startsWith("geoip:")) {
+            val name = value.removePrefix("geoip:")
+            // Same negation story as GEOIP: no "!" category exists in the core.
+            if (name.startsWith("!")) return null
+            val country = name.trim().uppercase(Locale.ROOT)
+            return if (country.isEmpty() || (country != "LAN" && knownGeoIp != null && country !in knownGeoIp)) {
+                null
+            } else {
+                "SRC-GEOIP,$name"
+            }
+        }
+        if (!isNumericAddress(value)) return null
+        return "SRC-IP-CIDR," + withHostPrefix(value)
     }
 
     private fun withHostPrefix(value: String): String = when {
@@ -354,16 +435,80 @@ object ClashConfig {
     }
 
     /**
-     * A port matcher: "80", "80,443", "1-1024". Commas are the syntax here, so it is
-     * validated on its own rather than through [ruleToken], which drops them; only
-     * ASCII digits pass, the way the core's parser expects.
+     * A port matcher as the core writes it: "80", "80/443", "1-1024". Xray and links
+     * spell the list with commas, but a comma is the core's field separator - only the
+     * first port would reach `NewPort`, the rest would be read as a target or a dropped
+     * parameter. Each segment must be a real port or a real range, because the parser
+     * rejects the whole document over "80,,443" or "80-90-100".
      */
     private fun portToken(raw: String): String? {
         val value = raw.trim()
         if (value.isEmpty()) return null
         if (value.any { it.isISOControl() || it == '\u2028' || it == '\u2029' || it.isWhitespace() }) return null
-        return value.takeIf { it.all { ch -> ch in '0'..'9' || ch == ',' || ch == '-' } }
+        val segments = value.split(',')
+        if (segments.size > MAX_PORT_RANGES) return null
+        val normalized = ArrayList<String>(segments.size)
+        for (segment in segments) {
+            if (segment.isEmpty()) return null
+            val range = segment.split('-', limit = 2)
+            val start = range[0].toIntOrNull() ?: return null
+            if (start !in 1..65535) return null
+            if (range.size == 2) {
+                val end = range[1].toIntOrNull() ?: return null
+                if (end !in start..65535) return null
+                normalized += "$start-$end"
+            } else {
+                normalized += start.toString()
+            }
+        }
+        return normalized.joinToString("/")
     }
+
+    /** `utils.NewUnsignedRanges` refuses a rule with more segments than this. */
+    private const val MAX_PORT_RANGES = 28
+
+    /**
+     * A regex the core can compile. mihomo builds its DOMAIN-REGEX rules with Go's RE2,
+     * which rejects the lookarounds, backreferences, atomic groups, possessive
+     * quantifiers and Perl-only escapes Java accepts - one rejected pattern fails the
+     * entire config. The patterns the panels actually ship are plain domain matches.
+     */
+    private fun safeRegex(pattern: String): Boolean {
+        if (pattern.isEmpty() || pattern.length > 4096) return false
+        if (UNSUPPORTED_REGEX.any { pattern.contains(it) }) return false
+        if (BACK_REFERENCE.containsMatchIn(pattern)) return false
+        return runCatching { Regex(pattern) }.isSuccess
+    }
+
+    private val UNSUPPORTED_REGEX = listOf(
+        "(?=", "(?!", "(?<=", "(?<!", "(?>", "(?(", "++", "*+", "?+", "\\k<",
+        "\\Q", "\\E", "\\G", "\\R", "\\X", "\\h", "\\Z", "\\p{Is",
+    )
+    private val BACK_REFERENCE = Regex("\\\\[1-9]")
+
+    /**
+     * mihomo's Hysteria2 `hop-interval` is a number (or a range) of seconds, not a Go
+     * duration: "30s" makes `utils.NewUnsignedRange` reject the whole outbound. Links
+     * and panels spell it both ways, so durations are converted; a value the core would
+     * reject is dropped and the core's 30-second default stands.
+     */
+    private fun hopInterval(raw: String): String? {
+        val value = raw.trim()
+        if (value.isEmpty()) return null
+        if (value.matches(HOP_SECONDS)) return value
+        val match = HOP_DURATION.matchEntire(value) ?: return null
+        val amount = match.groupValues[1].toDoubleOrNull() ?: return null
+        val factor = when (match.groupValues[2]) {
+            "ms" -> 0.001
+            "s" -> 1.0
+            "m" -> 60.0
+            else -> 3600.0
+        }
+        return (amount * factor).roundToLong().coerceAtLeast(1).toString()
+    }
+
+    private val HOP_SECONDS = Regex("\\d+(?:-\\d+)?")
+    private val HOP_DURATION = Regex("^(\\d+(?:\\.\\d+)?)(ms|s|m|h)$")
 
     /**
      * Whether a bare matcher really is an address. mihomo parses `IP-CIDR` with
@@ -462,8 +607,14 @@ object ClashConfig {
         y.key(4, "server", quote(profile.server))
         y.key(4, "port", profile.serverPort.toString())
         // Every type carries the flag: mihomo refuses UDP — DNS included — through a
-        // proxy that has not declared support for it, WireGuard and Hysteria2 included.
-        y.key(4, "udp", "true")
+        // proxy that has not declared support for it. A panel that says `udp: false`
+        // knows its server, unless the protocol is UDP by nature.
+        val udp = when (profile.type) {
+            ProfileType.WIREGUARD, ProfileType.HYSTERIA2, ProfileType.TUIC,
+            ProfileType.SHADOWQUIC, ProfileType.MASQUE -> true
+            else -> extraFlag(profile, "udp") ?: true
+        }
+        y.key(4, "udp", udp.toString())
         // Everything the typed columns do not cover: plugins, obfs, ECH, mux, sudoku
         // tables, snell version — whatever the panel's YAML carried.
         emitExtras(y, profile, handledKeys(profile.type))
@@ -471,7 +622,12 @@ object ClashConfig {
         when (profile.type) {
             ProfileType.VMESS -> {
                 y.key(4, "uuid", quote(profile.password))
-                y.key(4, "alterId", "0")
+                // Rows imported before the column existed kept the panel's value in
+                // extraOptions; keep honouring it until the next refresh rewrites them.
+                val alterId = profile.alterId.takeIf { it > 0 }
+                    ?: (extraObject(profile)?.get("alterId") as? JsonPrimitive)?.contentOrNull?.toIntOrNull()
+                    ?: 0
+                y.key(4, "alterId", alterId.toString())
                 y.key(4, "cipher", quote(profile.method.ifEmpty { "auto" }))
                 emitTransport(y, profile, alwaysNetwork = true)
                 emitTls(y, profile)
@@ -507,7 +663,10 @@ object ClashConfig {
             ProfileType.HTTP -> {
                 if (profile.username.isNotEmpty()) y.key(4, "username", quote(profile.username))
                 if (profile.password.isNotEmpty()) y.key(4, "password", quote(profile.password))
-                emitTls(y, profile, sniKey = "sni", alpnSupported = false)
+                // `fingerprint` on an HTTP outbound is a certificate pin, not the
+                // browser fingerprint a link's `fp` carries; the typed column is a
+                // browser value, so it stays out.
+                emitTls(y, profile, sniKey = "sni", alpnSupported = false, fingerprintKey = "")
             }
 
             ProfileType.WIREGUARD -> {
@@ -530,6 +689,9 @@ object ClashConfig {
                 if (profile.sni.isNotEmpty()) y.key(4, "sni", quote(profile.sni))
                 y.key(4, "skip-cert-verify", profile.allowInsecure.toString())
                 y.items(4, "alpn", listOf("h3"))
+                // Hysteria2's `fingerprint` is a certificate pin, not a browser
+                // fingerprint: a link's `fp=qq` here is hex-decoded and fails the whole
+                // outbound. mihomo's Hysteria2 has no uTLS option, so it stays out.
                 if (profile.obfsPassword.isNotEmpty()) {
                     y.key(4, "obfs", "salamander")
                     y.key(4, "obfs-password", quote(profile.obfsPassword))
@@ -537,12 +699,16 @@ object ClashConfig {
                 profile.hysteriaUpMbps?.let { y.key(4, "up", it.toString()) }
                 profile.hysteriaDownMbps?.let { y.key(4, "down", it.toString()) }
                 if (profile.portHopping.isNotEmpty()) y.key(4, "ports", quote(profile.portHopping))
+                hopInterval(profile.portHoppingInterval)?.let { y.key(4, "hop-interval", quote(it)) }
             }
 
             ProfileType.TUIC -> {
                 y.key(4, "uuid", quote(profile.username))
                 y.key(4, "password", quote(profile.password))
-                emitTls(y, profile, sniKey = "sni", tlsFlag = false)
+                // TUIC's `fingerprint` is a certificate pin; a link's `fp` is a browser
+                // fingerprint and has no field here. The pin from a panel stays in
+                // extraOptions and passes through untouched.
+                emitTls(y, profile, sniKey = "sni", tlsFlag = false, fingerprintKey = "")
             }
 
             ProfileType.ANYTLS -> {
@@ -567,7 +733,8 @@ object ClashConfig {
             ProfileType.SHADOWQUIC -> {
                 y.key(4, "username", quote(profile.username))
                 y.key(4, "password", quote(profile.password))
-                emitTls(y, profile, sniKey = "sni", tlsFlag = false)
+                // ShadowQuic has no uTLS fingerprint option; an unknown key is noise.
+                emitTls(y, profile, sniKey = "sni", tlsFlag = false, fingerprintKey = "")
             }
 
             ProfileType.TRUSTTUNNEL -> {
@@ -653,7 +820,9 @@ object ClashConfig {
         y.block(4, "amnezia-wg-option") {
             options.forEach { (key, value) ->
                 val primitive = value as? JsonPrimitive ?: return@forEach
-                y.key(6, quote(key), if (primitive.isString) quote(primitive.content) else primitive.content)
+                val text = booleanLiteral(key, primitive)
+                    ?: if (primitive.isString) quote(primitive.content) else primitive.content
+                y.key(6, quote(key), text)
             }
         }
     }
@@ -671,9 +840,11 @@ object ClashConfig {
         return common + when (type) {
             ProfileType.VMESS -> setOf(
                 "uuid", "alterId", "cipher", "network", "ws-opts", "grpc-opts", "xhttp-opts", "reality-opts",
+                "http-opts", "h2-opts", "mkcp-opts",
             ) + tls
             ProfileType.VLESS -> setOf(
                 "uuid", "flow", "encryption", "network", "ws-opts", "grpc-opts", "xhttp-opts", "reality-opts",
+                "http-opts", "h2-opts",
             ) + tls
             ProfileType.TROJAN -> setOf("password", "network", "ws-opts", "grpc-opts", "reality-opts") + tls
             ProfileType.SHADOWSOCKS -> setOf("cipher", "password")
@@ -684,7 +855,7 @@ object ClashConfig {
                 "persistent-keepalive", "remote-dns-resolve", "dns", "amnezia-wg-option",
             )
             ProfileType.HYSTERIA2 -> setOf(
-                "password", "obfs", "obfs-password", "ports", "up", "down",
+                "password", "obfs", "obfs-password", "ports", "up", "down", "hop-interval",
             ) + tls
             ProfileType.TUIC -> setOf("uuid", "password") + tls
             ProfileType.ANYTLS -> setOf("password") + tls
@@ -700,12 +871,71 @@ object ClashConfig {
     }
 
     private fun emitExtras(y: Yaml, profile: ProfileEntity, handled: Set<String>) {
-        if (profile.extraOptions.isBlank()) return
-        val options = runCatching {
-            Json.parseToJsonElement(profile.extraOptions) as? JsonObject
-        }.getOrNull() ?: return
+        val options = extraObject(profile) ?: return
         options.forEach { (key, value) ->
+            // A chained dialer points at another proxy tag; the document has one node,
+            // so the reference could only fail the whole config.
+            if (key == "dialer-proxy") return@forEach
             if (key !in handled) emitJsonValue(y, 4, key, value)
+        }
+    }
+
+    /** The profile's extra options as a map, or null when it carries none. */
+    private fun extraObject(profile: ProfileEntity): JsonObject? {
+        if (profile.extraOptions.isBlank()) return null
+        return runCatching {
+            Json.parseToJsonElement(profile.extraOptions) as? JsonObject
+        }.getOrNull()
+    }
+
+    /** A boolean the profile's panel set in its extra options, or null when absent. */
+    private fun extraFlag(profile: ProfileEntity, key: String): Boolean? {
+        val value = extraObject(profile)?.get(key) as? JsonPrimitive ?: return null
+        if (value.isString) {
+            return when (value.content.trim().lowercase(Locale.ROOT)) {
+                "true", "1", "yes", "on" -> true
+                "false", "0", "no", "off" -> false
+                else -> null
+            }
+        }
+        return value.content.toBooleanStrictOrNull()
+    }
+
+    /**
+     * The option keys mihomo types as booleans, across every outbound and its plugin
+     * options. Link query strings and panel YAML often spell them "true"/"1"; the
+     * core's decoder accepts a YAML boolean and nothing else, and one string there
+     * fails the whole document.
+     */
+    private val booleanOptions = setOf(
+        "udp", "tfo", "mptcp", "xudp", "packet-addr", "tls", "skip-cert-verify",
+        "reduce-rtt", "disable-sni", "udp-over-stream", "zero-rtt", "disable-mtu-discovery",
+        "http-mask", "http-mask-tls", "enable-pure-downlink",
+        "enabled", "enable", "disabled", "disable", "insecure",
+        "disable-reuse", "quic", "health-check", "remote-dns-resolve", "fast-open",
+        "reuse", "random-trailers", "disable-cookies", "udp-over-tcp",
+        "no-grpc-header", "x-padding-obfs-mode", "global-padding", "authenticated-length",
+        "v2ray-http-upgrade", "v2ray-http-upgrade-fast-open", "congestion",
+        // Plugin options (the core decodes plugin-opts a second time, same rules).
+        "mux", "nocomp", "acknodelay", "force-tls12",
+        // Rarer outbounds the core also knows; a panel may still carry their flags.
+        "connection-ready", "connection-recall-exit", "dhcp", "encrypted-hello",
+        "ephemeral", "forward", "h2-do-not-wait-for-download-finish", "low-bandwidth",
+        "only-tcp", "padding", "sequence-watermarking-enabled", "statistic",
+        "support-x25519mlkem768", "accept-dns", "accept-routes", "exit-node-allow-lan-access",
+        "disable-kcp-input", "disable-p2p", "disable-quic-input", "enable-encryption",
+        "enable-exit-node", "enable-kcp-proxy", "enable-quic-proxy", "latency-first",
+        "no-listener", "private-mode", "secure-mode",
+    )
+
+    /** "true"/"1" (and friends) on a boolean option as the literal the core parses. */
+    private fun booleanLiteral(key: String, value: JsonPrimitive): String? {
+        if (!value.isString) return null
+        if (key.lowercase(Locale.ROOT).replace('_', '-') !in booleanOptions) return null
+        return when (value.content.trim().lowercase(Locale.ROOT)) {
+            "true", "1", "yes", "on" -> "true"
+            "false", "0", "no", "off" -> "false"
+            else -> null
         }
     }
 
@@ -721,7 +951,7 @@ object ClashConfig {
             is JsonPrimitive -> y.key(
                 indent,
                 name,
-                if (value.isString) quote(value.content) else value.content,
+                booleanLiteral(key, value) ?: if (value.isString) quote(value.content) else value.content,
             )
         }
     }
@@ -732,73 +962,265 @@ object ClashConfig {
         when (profile.network.ifEmpty { "tcp" }) {
             "ws", "websocket" -> {
                 y.key(4, "network", "ws")
-                y.block(4, "ws-opts") {
-                    y.key(6, "path", quote(profile.path.ifEmpty { "/" }))
-                    if (profile.host.isNotEmpty()) {
-                        y.block(6, "headers") { y.key(8, "Host", quote(profile.host)) }
-                    }
-                }
+                emitWsOpts(y, profile)
+            }
+
+            "httpupgrade" -> {
+                // mihomo has no httpupgrade transport of its own: it is a WebSocket
+                // handshake with the upgrade flag set.
+                y.key(4, "network", "ws")
+                emitWsOpts(y, profile, httpUpgrade = true)
             }
 
             "grpc" -> {
                 y.key(4, "network", "grpc")
-                y.block(4, "grpc-opts") {
-                    y.key(6, "grpc-service-name", quote(profile.serviceName))
-                }
+                emitGrpcOpts(y, profile)
             }
 
             "xhttp", "splithttp" -> {
-                val extra = xhttpExtra(profile)
                 y.key(4, "network", "xhttp")
-                y.block(4, "xhttp-opts") {
-                    y.key(6, "path", quote(profile.path.ifEmpty { "/" }))
-                    y.key(6, "mode", quote(profile.mode.ifEmpty { "auto" }))
-                    val extraHeaders = extra?.get("headers") as? JsonObject
-                    if (profile.host.isNotEmpty() || extraHeaders?.isNotEmpty() == true) {
-                        y.block(6, "headers") {
-                            if (profile.host.isNotEmpty()) y.key(8, "Host", quote(profile.host))
-                            extraHeaders?.forEach { (key, value) ->
-                                // The typed host wins; a link that kept it only in
-                                // `extra` still gets it through.
-                                if (!key.equals("Host", ignoreCase = true) || profile.host.isEmpty()) {
-                                    emitJsonValue(y, 8, key, value)
-                                }
-                            }
-                        }
-                    }
-                    // The share link's `extra` and a panel's xhttp settings ride here:
-                    // same values, Xray's camelCase turned into the kebab-case the core
-                    // reads. path/mode/headers are already written from their columns.
-                    extra?.forEach { (key, value) ->
-                        when {
-                            key in setOf("path", "mode", "headers") -> Unit
-                            kebabKey(key) == "download-settings" -> {
-                                // mihomo refuses the whole outbound when a split download
-                                // is asked for in stream-one mode ("xhttp mode
-                                // \"stream-one\" cannot be used with download-settings"),
-                                // so the setting goes rather than the tunnel.
-                                if (profile.mode.equals("stream-one", ignoreCase = true)) return@forEach
-                                val settings = value as? JsonObject ?: return@forEach
-                                if (settings.isEmpty()) return@forEach
-                                // A panel in the core's own spelling already: nothing to
-                                // translate, the tree goes through as it came.
-                                if (settings.isXrayDownloadTree()) emitDownloadSettings(y, 6, settings)
-                                else emitJsonValue(y, 6, "download-settings", kebabTree(settings))
-                            }
-                            else -> emitJsonValue(y, 6, kebabKey(key), kebabTree(value))
-                        }
-                    }
+                emitXhttpOpts(y, profile)
+            }
+
+            "kcp", "mkcp" -> {
+                if (profile.type == ProfileType.VMESS) {
+                    y.key(4, "network", "mkcp")
+                    emitKcpOpts(y, profile)
+                } else if (alwaysNetwork) {
+                    y.key(4, "network", "tcp")
                 }
             }
 
-            // HTTP/2 and HTTP transports keep their option maps in extraOptions.
-            "http" -> y.key(4, "network", "http")
+            "http" -> if (profile.type == ProfileType.VMESS || profile.type == ProfileType.VLESS) {
+                y.key(4, "network", "http")
+                emitHttpOpts(y, profile)
+            } else if (alwaysNetwork) {
+                y.key(4, "network", "tcp")
+            }
 
-            "h2" -> y.key(4, "network", "h2")
+            "h2" -> if (profile.type == ProfileType.VMESS || profile.type == ProfileType.VLESS) {
+                y.key(4, "network", "h2")
+                emitH2Opts(y, profile)
+            } else if (alwaysNetwork) {
+                y.key(4, "network", "tcp")
+            }
+
+            // Xray's TCP-with-HTTP-header obfuscation is mihomo's HTTP transport.
+            "tcp" -> if (profile.headerType.equals("http", ignoreCase = true) &&
+                (profile.type == ProfileType.VMESS || profile.type == ProfileType.VLESS)
+            ) {
+                y.key(4, "network", "http")
+                emitHttpOpts(y, profile)
+            } else if (alwaysNetwork) {
+                y.key(4, "network", "tcp")
+            }
 
             else -> if (alwaysNetwork) y.key(4, "network", "tcp")
         }
     }
+
+    /** The option map a panel's Clash entry carried, or null when it had none. */
+    private fun panelObject(profile: ProfileEntity, key: String): JsonObject? =
+        extraObject(profile)?.get(key) as? JsonObject
+
+    /** The first string of a scalar-or-list value, as Clash writes hosts and paths. */
+    private fun firstString(value: JsonElement?): String? = when (value) {
+        is JsonPrimitive -> value.contentOrNull?.takeIf { it.isNotEmpty() }
+        is JsonArray -> (value.firstOrNull() as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotEmpty() }
+        else -> null
+    }
+
+    /**
+     * A WebSocket/XHTTP header, whose core type is a plain string. A panel that wrote
+     * the value as a list gets its first entry; the array itself would fail decoding.
+     */
+    private fun emitHeader(y: Yaml, indent: Int, key: String, value: JsonElement) {
+        val text = firstString(value) ?: return
+        y.key(indent, quote(key), quote(text))
+    }
+
+    /** An HTTP transport header: the core's type is a list, even for one value. */
+    private fun emitHttpHeader(y: Yaml, indent: Int, key: String, value: JsonElement) {
+        when (value) {
+            is JsonArray -> y.items(
+                indent,
+                quote(key),
+                value.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }.map(::quote),
+            )
+            is JsonPrimitive -> if (value.contentOrNull?.isNotEmpty() == true) {
+                y.items(indent, quote(key), listOf(quote(value.content)))
+            }
+            else -> Unit
+        }
+    }
+
+    private fun emitWsOpts(y: Yaml, profile: ProfileEntity, httpUpgrade: Boolean = false) {
+        val panel = panelObject(profile, "ws-opts")
+        val path = profile.path.ifEmpty { panel?.primitive("path") ?: "/" }
+        val panelHeaders = panel?.get("headers") as? JsonObject
+        y.block(4, "ws-opts") {
+            y.key(6, "path", quote(path))
+            if (profile.host.isNotEmpty() || panelHeaders?.isNotEmpty() == true) {
+                y.block(6, "headers") {
+                    if (profile.host.isNotEmpty()) y.key(8, "Host", quote(profile.host))
+                    panelHeaders?.forEach { (key, value) ->
+                        // The typed host wins; a panel that kept it only in its map
+                        // still gets it through.
+                        if (!key.equals("Host", ignoreCase = true) || profile.host.isEmpty()) {
+                            emitHeader(y, 8, key, value)
+                        }
+                    }
+                }
+            }
+            if (httpUpgrade) y.key(6, "v2ray-http-upgrade", "true")
+            panel?.forEach { (key, value) ->
+                // path/headers are written from the typed columns above; with an
+                // httpupgrade transport the flag is already true. A plain ws entry
+                // may carry the flag itself — that is the Clash way of saying it.
+                if (key in setOf("path", "headers")) return@forEach
+                if (httpUpgrade && key == "v2ray-http-upgrade") return@forEach
+                emitJsonValue(y, 6, key, value)
+            }
+        }
+    }
+
+    private fun emitGrpcOpts(y: Yaml, profile: ProfileEntity) {
+        val panel = panelObject(profile, "grpc-opts")
+        val service = profile.serviceName.ifEmpty { panel?.primitive("grpc-service-name").orEmpty() }
+        y.block(4, "grpc-opts") {
+            y.key(6, "grpc-service-name", quote(service))
+            panel?.forEach { (key, value) ->
+                if (key != "grpc-service-name") emitJsonValue(y, 6, key, value)
+            }
+        }
+    }
+
+    private fun emitHttpOpts(y: Yaml, profile: ProfileEntity) {
+        val panel = panelObject(profile, "http-opts")
+        val path = profile.path.ifEmpty { firstString(panel?.get("path")) ?: "/" }
+        val panelHeaders = panel?.get("headers") as? JsonObject
+        val host = profile.host.ifEmpty {
+            panelHeaders?.entries?.firstOrNull { it.key.equals("Host", ignoreCase = true) }
+                ?.value?.let(::firstString).orEmpty()
+        }
+        y.block(4, "http-opts") {
+            y.items(6, "path", listOf(quote(path)))
+            if (host.isNotEmpty() || panelHeaders?.isNotEmpty() == true) {
+                y.block(6, "headers") {
+                    if (host.isNotEmpty()) y.items(8, "Host", listOf(quote(host)))
+                    panelHeaders?.forEach { (key, value) ->
+                        if (!key.equals("Host", ignoreCase = true) || host.isEmpty()) {
+                            emitHttpHeader(y, 8, key, value)
+                        }
+                    }
+                }
+            }
+            panel?.forEach { (key, value) ->
+                if (key !in setOf("path", "headers")) emitJsonValue(y, 6, key, value)
+            }
+        }
+    }
+
+    private fun emitH2Opts(y: Yaml, profile: ProfileEntity) {
+        val panel = panelObject(profile, "h2-opts")
+        val host = profile.host.ifEmpty { firstString(panel?.get("host")).orEmpty() }
+        val path = profile.path.ifEmpty { panel?.primitive("path") ?: "/" }
+        y.block(4, "h2-opts") {
+            if (host.isNotEmpty()) y.items(6, "host", listOf(quote(host)))
+            y.key(6, "path", quote(path))
+            panel?.forEach { (key, value) ->
+                if (key !in setOf("host", "path")) emitJsonValue(y, 6, key, value)
+            }
+        }
+    }
+
+    private fun emitKcpOpts(y: Yaml, profile: ProfileEntity) {
+        val panel = panelObject(profile, "mkcp-opts")
+        y.block(4, "mkcp-opts") {
+            if (profile.seed.isNotEmpty()) y.key(6, "seed", quote(profile.seed))
+            if (profile.headerType.isNotEmpty()) y.key(6, "header", quote(profile.headerType))
+            panel?.forEach { (key, value) ->
+                val overridden = (key == "seed" && profile.seed.isNotEmpty()) ||
+                    (key == "header" && profile.headerType.isNotEmpty())
+                if (!overridden) emitJsonValue(y, 6, key, value)
+            }
+        }
+    }
+
+    private fun emitXhttpOpts(y: Yaml, profile: ProfileEntity) {
+        val panel = panelObject(profile, "xhttp-opts")
+        val extra = xhttpExtra(profile) ?: (panel?.get("extra") as? JsonObject)
+        val path = profile.path.ifEmpty { panel?.primitive("path") ?: "/" }
+        val mode = profile.mode.ifEmpty { panel?.primitive("mode") ?: "auto" }
+        val panelHeaders = panel?.get("headers") as? JsonObject
+        val extraHeaders = extra?.get("headers") as? JsonObject
+        y.block(4, "xhttp-opts") {
+            y.key(6, "path", quote(path))
+            y.key(6, "mode", quote(mode))
+            if (profile.host.isNotEmpty() || panelHeaders?.isNotEmpty() == true || extraHeaders?.isNotEmpty() == true) {
+                y.block(6, "headers") {
+                    if (profile.host.isNotEmpty()) y.key(8, "Host", quote(profile.host))
+                    panelHeaders?.forEach { (key, value) ->
+                        if (!key.equals("Host", ignoreCase = true) || profile.host.isEmpty()) {
+                            emitHeader(y, 8, key, value)
+                        }
+                    }
+                    extraHeaders?.forEach { (key, value) ->
+                        // The typed host wins; a link that kept it only in `extra` still
+                        // gets it through.
+                        if (!key.equals("Host", ignoreCase = true) || profile.host.isEmpty()) {
+                            emitHeader(y, 8, key, value)
+                        }
+                    }
+                }
+            }
+            // The panel's own xhttp options ride as they came (the core's spelling),
+            // while path/mode/headers above stay the typed values.
+            val written = mutableSetOf("path", "mode", "headers", "extra")
+            panel?.forEach { (key, value) ->
+                if (key !in written) {
+                    // The core refuses a split download in stream-one mode; the
+                    // setting goes rather than the whole outbound.
+                    if (key == "download-settings" && mode.equals("stream-one", ignoreCase = true)) {
+                        return@forEach
+                    }
+                    emitJsonValue(y, 6, key, value)
+                    written += normalizedKey(key)
+                }
+            }
+            // The share link's `extra` and a panel's xhttp settings ride here: same
+            // values, Xray's camelCase turned into the kebab-case the core reads.
+            extra?.forEach { (key, value) ->
+                val target = kebabKey(key)
+                val normalized = normalizedKey(target)
+                when {
+                    key in setOf("path", "mode", "headers") -> Unit
+                    normalized in written -> Unit
+                    target == "download-settings" -> {
+                        // mihomo refuses the whole outbound when a split download is
+                        // asked for in stream-one mode ("xhttp mode \"stream-one\"
+                        // cannot be used with download-settings"), so the setting goes
+                        // rather than the tunnel.
+                        if (mode.equals("stream-one", ignoreCase = true)) return@forEach
+                        val settings = value as? JsonObject ?: return@forEach
+                        if (settings.isEmpty()) return@forEach
+                        // A panel in the core's own spelling already: nothing to
+                        // translate, the tree goes through as it came.
+                        if (settings.isXrayDownloadTree()) emitDownloadSettings(y, 6, settings)
+                        else emitJsonValue(y, 6, "download-settings", kebabTree(settings))
+                        written += normalized
+                    }
+                    else -> {
+                        emitJsonValue(y, 6, target, kebabTree(value))
+                        written += normalized
+                    }
+                }
+            }
+        }
+    }
+
+    private fun normalizedKey(key: String): String =
+        key.lowercase(Locale.ROOT).replace('_', '-')
 
     /** The Xray-style extra object of an XHTTP profile; null when absent or malformed. */
     private fun xhttpExtra(profile: ProfileEntity): JsonObject? {
@@ -932,6 +1354,7 @@ object ClashConfig {
         sniKey: String = "servername",
         alpnSupported: Boolean = true,
         tlsFlag: Boolean = true,
+        fingerprintKey: String = "client-fingerprint",
     ) {
         val alpn = profile.alpn.split(',').map { it.trim() }.filter { it.isNotEmpty() }
         when (profile.security) {
@@ -939,18 +1362,26 @@ object ClashConfig {
                 if (tlsFlag) y.key(4, "tls", "true")
                 if (profile.sni.isNotEmpty()) y.key(4, sniKey, quote(profile.sni))
                 if (profile.allowInsecure) y.key(4, "skip-cert-verify", "true")
-                if (profile.fingerprint.isNotEmpty()) y.key(4, "client-fingerprint", quote(profile.fingerprint))
+                if (fingerprintKey.isNotEmpty() && profile.fingerprint.isNotEmpty()) {
+                    y.key(4, fingerprintKey, quote(profile.fingerprint))
+                }
                 if (alpnSupported && alpn.isNotEmpty()) y.items(4, "alpn", alpn.map(::quote))
             }
 
             "reality" -> {
                 if (tlsFlag) y.key(4, "tls", "true")
                 if (profile.sni.isNotEmpty()) y.key(4, sniKey, quote(profile.sni))
-                if (profile.fingerprint.isNotEmpty()) y.key(4, "client-fingerprint", quote(profile.fingerprint))
+                if (fingerprintKey.isNotEmpty() && profile.fingerprint.isNotEmpty()) {
+                    y.key(4, fingerprintKey, quote(profile.fingerprint))
+                }
                 if (alpnSupported && alpn.isNotEmpty()) y.items(4, "alpn", alpn.map(::quote))
-                y.block(4, "reality-opts") {
-                    y.key(6, "public-key", quote(profile.publicKey))
-                    if (profile.shortId.isNotEmpty()) y.key(6, "short-id", quote(profile.shortId))
+                // An empty key is no REALITY at all: writing the block would make the
+                // core reject the whole document, so the profile falls back to TLS.
+                if (profile.publicKey.isNotEmpty()) {
+                    y.block(4, "reality-opts") {
+                        y.key(6, "public-key", quote(profile.publicKey))
+                        if (profile.shortId.isNotEmpty()) y.key(6, "short-id", quote(profile.shortId))
+                    }
                 }
             }
 

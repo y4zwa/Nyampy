@@ -241,4 +241,33 @@ class ClashYamlParserTest {
         assertEquals(1, profiles.size)
         assertEquals("🇩🇪  Германия #3", profiles.single().remarks)
     }
+
+    @Test
+    fun `boolean options stay strings for the writer to coerce, and h2 keeps its network`() {
+        val yaml = """
+            proxies:
+            - name: t
+              type: tuic
+              server: t.example.com
+              port: 443
+              uuid: 00000000-1111-2222-3333-444444444444
+              password: x
+              udp: false
+              reduce-rtt: true
+            - name: h
+              type: vless
+              server: h.example.com
+              port: 443
+              uuid: 00000000-1111-2222-3333-444444444444
+              network: h2
+        """.trimIndent()
+        val profiles = ClashYamlParser.parse(yaml)!!
+        val tuic = profiles.first { it.type == ProfileType.TUIC }
+        // extraOptions keeps the text (the link key hashes it); the writer turns the
+        // known boolean keys into YAML booleans, which is what the core decodes.
+        assertTrue(tuic.extraOptions.contains("\"udp\":\"false\""))
+        assertTrue(tuic.extraOptions.contains("\"reduce-rtt\":\"true\""))
+        // h2 and http are different transports; collapsing them breaks the handshake.
+        assertEquals("h2", profiles.first { it.type == ProfileType.VLESS }.network)
+    }
 }

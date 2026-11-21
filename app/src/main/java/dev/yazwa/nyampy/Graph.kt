@@ -2,8 +2,6 @@ package dev.yazwa.nyampy
 
 import android.content.Context
 import androidx.room.Room
-import dev.yazwa.nyampy.core.CoreConfigFile
-import dev.yazwa.nyampy.core.TunnelState
 import dev.yazwa.nyampy.data.SettingsStore
 import dev.yazwa.nyampy.db.NyampyDatabase
 import dev.yazwa.nyampy.sub.HappSpoof
@@ -44,18 +42,12 @@ object Graph {
             NyampyDatabase.MIGRATION_12_13,
             NyampyDatabase.MIGRATION_13_14,
             NyampyDatabase.MIGRATION_14_15,
+            NyampyDatabase.MIGRATION_15_16,
         ).build()
         subscriptions = SubscriptionRepository(
             context = application,
             db = database,
-            // Read lazily, at fetch time: by then the app object has long since bound the
-            // shared tunnel link. Fetches route through the loopback mixed inbound whenever
-            // the tunnel is up, so a panel behind a block answers anyway.
-            tunnelUp = {
-                NyampyApp.tunnelClient.status.value.state == TunnelState.UP
-            },
-            localProxy = { CoreConfigFile.localProxy(application) },
-            // Also read at fetch time, through the shared settings state: the Happ
+            // Read at fetch time, through the shared settings state: the Happ
             // fingerprint follows the toggle the moment it flips, and every fetch -
             // manual or background, first hop or nested — dresses up the same way.
             happSpoof = {

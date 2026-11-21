@@ -260,6 +260,7 @@ object LinkParsers {
             serverPort = parsePort(field("port")),
             password = id,
             method = field("scy").ifEmpty { DEFAULT_VMESS_SECURITY },
+            alterId = field("aid").toIntOrNull()?.coerceIn(0, 65535) ?: 0,
             network = net.ifEmpty { "tcp" },
             headerType = field("type"),
             host = field("host"),
@@ -268,7 +269,7 @@ object LinkParsers {
             sni = field("sni"),
             alpn = field("alpn"),
             fingerprint = field("fp"),
-            allowInsecure = field("insecure") == "1",
+            allowInsecure = truthy(field("insecure")),
         )
         val withTransport = when (profile.network) {
             "kcp", "mkcp" -> profile.copy(seed = field("path"))
@@ -287,7 +288,9 @@ object LinkParsers {
             password = uri.userInfo.orEmpty(),
             method = DEFAULT_VMESS_SECURITY,
         )
-        return applyQueryParams(profile, queryParams(uri))
+        val query = queryParams(uri)
+        val alterId = (query["alterId"] ?: query["aid"])?.toIntOrNull()?.coerceIn(0, 65535) ?: 0
+        return applyQueryParams(profile, query).copy(alterId = alterId)
     }
 
     // ------------------------------------------------------------------ vless
@@ -590,9 +593,11 @@ object LinkParsers {
     }
 
     private fun insecureFlag(query: Map<String, String>): Boolean =
-        listOf("insecure", "allow_insecure", "allowInsecure").any {
-            query[it].equals("1", ignoreCase = true) || query[it].equals("true", ignoreCase = true)
-        }
+        listOf("insecure", "allow_insecure", "allowInsecure").any { truthy(query[it]) }
+
+    /** The link dialects spell a boolean flag as "1", "true" or the word. */
+    private fun truthy(value: String?): Boolean =
+        value?.trim()?.lowercase() in setOf("1", "true", "yes", "on")
 
     /** The query string minus the keys the typed columns already own, as JSON. */
     private fun queryExtras(
@@ -649,7 +654,7 @@ object LinkParsers {
         result = result.copy(security = if (security == TLS || security == REALITY) security else "")
         val insecureKeys = listOf("insecure", "allowInsecure", "allow_insecure")
         result = result.copy(
-            allowInsecure = insecureKeys.any { query[it] == "1" },
+            allowInsecure = insecureKeys.any { truthy(query[it]) },
             sni = query["sni"].orEmpty(),
             fingerprint = query["fp"].orEmpty(),
             alpn = query["alpn"].orEmpty(),

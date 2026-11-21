@@ -12,6 +12,7 @@ internal object ClashRouting {
     private val siteCode = Regex("[A-Za-z0-9_-]+(?:@[A-Za-z0-9_-]+)?")
     private val ipv6Text = Regex("[0-9A-Fa-f:.]+")
     private val portText = Regex("[0-9]{1,5}(?:-[0-9]{1,5})?")
+    private val countryCode = Regex("[A-Za-z]{2}")
 
     fun parse(config: Map<*, *>, proxyNames: Set<String>): String {
         val mode = config["mode"] as? String
@@ -58,8 +59,11 @@ internal object ClashRouting {
         "DOMAIN-SUFFIX" -> value.takeIf(domainText::matches)?.let { "domain" to "domain:$it" }
         "DOMAIN-KEYWORD" -> value.takeIf(domainText::matches)?.let { "domain" to "keyword:$it" }
         "GEOSITE" -> value.takeIf(siteCode::matches)?.let { "domain" to "geosite:$it" }
-        "GEOIP", "SRC-GEOIP" -> value.takeIf { it.equals("ru", true) || it.equals("private", true) }
-            ?.let { (if (type == "GEOIP") "ip" else "source") to "geoip:$it" }
+        // Any country code passes here; the writer drops the categories the shipped
+        // geodata does not carry, so the check belongs there, not in this reader.
+        "GEOIP", "SRC-GEOIP" -> value.takeIf {
+            it.equals("private", true) || it.equals("lan", true) || countryCode.matches(it)
+        }?.let { (if (type == "GEOIP") "ip" else "source") to "geoip:$it" }
         "IP-CIDR", "IP-CIDR6", "SRC-IP-CIDR" -> value.takeIf(::validCidr)
             ?.let { (if (type == "SRC-IP-CIDR") "source" else "ip") to it }
         "DST-PORT", "SRC-PORT" -> value.takeIf(::validPort)

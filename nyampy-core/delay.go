@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/metacubex/mihomo/adapter"
+	"github.com/metacubex/mihomo/component/ca"
 	"github.com/metacubex/mihomo/config"
 	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/tunnel"
@@ -30,12 +31,21 @@ func TestDelay(yamlDoc string, url string, timeoutMs int) int {
 		return -1
 	}
 	// The probe document gets the same whitelist the tunnel document does: a test
-	// document has no business carrying inbounds, providers or a custom CA either.
+	// document has no business carrying inbounds or providers. The one exception is
+	// the trusted chain: AddCertificate only appends to the process pool, so a probe
+	// for a provider's own CA does not disturb the live tunnel's trust.
 	patch(raw, "")
+	for _, certificate := range raw.TLS.CustomTrustCert {
+		_ = ca.AddCertificate(certificate)
+	}
 	proxy, err := adapter.ParseProxy(raw.Proxy[0])
 	if err != nil {
 		return -1
 	}
+	// A one-off proxy owns its own resources: WireGuard builds a device behind it,
+	// XHTTP a client and gun a pool. Without Close every probe leaks one for the life
+	// of the core process.
+	defer func() { _ = proxy.Close() }()
 	return probe(proxy, url, timeoutMs)
 }
 

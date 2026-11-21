@@ -18,7 +18,6 @@ data class SubscriptionMetadata(
     val expireEpochSeconds: Long = 0,
     val updateIntervalHours: Int? = null,
     val geodataSources: String = "",
-    val routingProfileUrl: String? = null,
     /** The panel's `profile-logo`: a URL the card's avatar is downloaded from. */
     val logoUrl: String? = null,
     val supportUrl: String? = null,
@@ -88,11 +87,8 @@ object SubscriptionHeaders {
         first("content-disposition")?.let { meta = meta.copy(title = meta.title ?: parseFilename(it)) }
         first("profile-update-interval")?.let { parseUpdateInterval(it)?.let { h -> meta = meta.copy(updateIntervalHours = h) } }
         val routing = first("routing")
-        val remoteRouting = first("autorouting")?.let(GeodataSources::remoteProfileUrl)
-            ?: routing?.let(GeodataSources::remoteProfileUrl)
         meta = meta.copy(
             geodataSources = routing?.let(GeodataSources::fromHappHeader).orEmpty(),
-            routingProfileUrl = remoteRouting,
         )
         first("profile-logo")?.let { meta = meta.copy(logoUrl = it) }
         return meta.copy(

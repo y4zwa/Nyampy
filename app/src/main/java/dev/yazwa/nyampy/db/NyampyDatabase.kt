@@ -104,7 +104,7 @@ abstract class ProfileDao {
  */
 @Database(
     entities = [SubscriptionEntity::class, ProfileEntity::class],
-    version = 15,
+    version = 16,
     exportSchema = false,
 )
 abstract class NyampyDatabase : RoomDatabase() {
@@ -271,6 +271,16 @@ abstract class NyampyDatabase : RoomDatabase() {
         val MIGRATION_14_15 = object : Migration(14, 15) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE profiles ADD COLUMN extraOptions TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
+        /**
+         * v16: VMess's legacy alterId — panels still ship `aid` on old servers, and the
+         * writer used to force every profile to 0.
+         */
+        val MIGRATION_15_16 = object : Migration(15, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE profiles ADD COLUMN alterId INTEGER NOT NULL DEFAULT 0")
             }
         }
 

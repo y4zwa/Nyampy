@@ -27,7 +27,6 @@ import dev.yazwa.nyampy.db.SubscriptionEntity
 import dev.yazwa.nyampy.db.WARP_SUBSCRIPTION_ID
 import dev.yazwa.nyampy.db.balancerMemberKeys
 import dev.yazwa.nyampy.db.computeLinkKey
-import dev.yazwa.nyampy.mihomo.LocalProxy
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
@@ -43,9 +42,7 @@ import java.util.concurrent.TimeUnit
 class SubscriptionRepository(
     context: Context,
     private val db: NyampyDatabase,
-    private val tunnelUp: () -> Boolean,
     private val happSpoof: () -> HappSpoof.Fingerprint?,
-    private val localProxy: () -> LocalProxy? = { null },
 ) {
     private val context: Application = context.applicationContext as Application
 
@@ -59,7 +56,7 @@ class SubscriptionRepository(
 
     private val refreshLocks = ConcurrentHashMap<String, Mutex>()
 
-    private val fetcher = SubscriptionFetcher(tunnelUp, happSpoof, localProxy)
+    private val fetcher = SubscriptionFetcher(happSpoof)
     private val subscriptions = db.subscriptionDao()
     private val profiles = db.profileDao()
 

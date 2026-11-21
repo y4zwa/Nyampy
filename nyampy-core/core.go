@@ -98,10 +98,11 @@ func Configure(path string, authentication string) error {
 }
 
 // patch rebuilds the document on the core's own defaults, keeping only the fields the
-// app's writer is allowed to decide — the top-level keys ClashConfig emits. Everything
+// app's writer is allowed to decide - the top-level keys ClashConfig emits. Everything
 // else stays at DefaultRawConfig: no extra inbounds, no listeners or tunnels, no proxy
-// or rule providers, no hosts override, no custom CA, no UI download, no external
-// controller. A field a future mihomo adds is denied by default.
+// or rule providers, no hosts override, no TLS section beyond the profile's own PEM
+// trust chain, no UI download, no external controller. A field a future mihomo adds is
+// denied by default.
 //
 // This is a whitelist, not a blacklist, on purpose. The document is a build artefact of
 // a subscription's data: its rule lines carry domains that came from someone else, and a
@@ -152,6 +153,24 @@ func patch(raw *config.RawConfig, authentication string) {
 
 	// The TUN belongs to the VpnService and is attached by StartTun.
 	def.Tun = config.RawTun{}
+
+	// The one TLS field the document may carry: the trusted server chain of the profile
+	// the user connected to — a sing-box subscription may bring its provider's CA. Only
+	// PEM certificates pass; a path, a client key or a listener certificate is dropped.
+	def.TLS = config.RawTLS{}
+	total := 0
+	for _, certificate := range raw.TLS.CustomTrustCert {
+		certificate = strings.TrimSpace(certificate)
+		if !strings.HasPrefix(certificate, "-----BEGIN CERTIFICATE-----") {
+			continue
+		}
+		total += len(certificate)
+		if total > 512*1024 || len(def.TLS.CustomTrustCert) >= 8 {
+			def.TLS.CustomTrustCert = nil
+			break
+		}
+		def.TLS.CustomTrustCert = append(def.TLS.CustomTrustCert, certificate)
+	}
 
 	// DefaultRawConfig carries the project's UI archive URL; nothing here ever asks for
 	// a UI (external-ui stays empty), but the URL has no business in this build either.

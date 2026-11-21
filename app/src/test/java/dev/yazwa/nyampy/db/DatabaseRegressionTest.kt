@@ -70,7 +70,7 @@ class DatabaseRegressionTest {
 
     @Test
     fun `manual base64 imports deduplicate within a batch and append in order`() = runBlocking {
-        val repository = SubscriptionRepository(RuntimeEnvironment.getApplication(), db, { false }, { null })
+        val repository = SubscriptionRepository(RuntimeEnvironment.getApplication(), db, { null })
         val first = "hy2://test@one.example.com:443"
         val second = "hy2://test@two.example.com:443"
         assertEquals(1, repository.addManualProfiles(LinkUtils.encodeBase64("$first\n$first")).getOrThrow())
@@ -82,7 +82,7 @@ class DatabaseRegressionTest {
 
     @Test
     fun `deleting a balancer removes unused internals but retains shared members`() = runBlocking {
-        val repository = SubscriptionRepository(RuntimeEnvironment.getApplication(), db, { false }, { null })
+        val repository = SubscriptionRepository(RuntimeEnvironment.getApplication(), db, { null })
         val member = ProfileEntity(id = "member", subscriptionId = null, type = ProfileType.SOCKS,
             hidden = true, linkKey = "shared")
         val unused = member.copy(id = "unused", linkKey = "unused")
@@ -100,7 +100,7 @@ class DatabaseRegressionTest {
 
     @Test
     fun `deleting a visible server retains the hidden endpoint needed by its balancer`() = runBlocking {
-        val repository = SubscriptionRepository(RuntimeEnvironment.getApplication(), db, { false }, { null })
+        val repository = SubscriptionRepository(RuntimeEnvironment.getApplication(), db, { null })
         val server = ProfileEntity(id = "member", subscriptionId = null, type = ProfileType.SOCKS, linkKey = "key")
         val group = ProfileEntity(id = "group", subscriptionId = null, type = ProfileType.BALANCER,
             balancerMembers = "key")
@@ -112,7 +112,7 @@ class DatabaseRegressionTest {
 
     @Test
     fun `importing a balancer member separately makes the existing server visible`() = runBlocking {
-        val repository = SubscriptionRepository(RuntimeEnvironment.getApplication(), db, { false }, { null })
+        val repository = SubscriptionRepository(RuntimeEnvironment.getApplication(), db, { null })
         val link = "hy2://test@one.example.com:443"
         repository.addManualProfiles(link).getOrThrow()
         val server = db.profileDao().bySubscriptionOnce(null).single()
@@ -163,7 +163,7 @@ class DatabaseRegressionTest {
         val context = RuntimeEnvironment.getApplication()
         val database = Room.inMemoryDatabaseBuilder(context, NyampyDatabase::class.java).allowMainThreadQueries().build()
         try {
-            val repository = SubscriptionRepository(context, database, { false }, { null })
+            val repository = SubscriptionRepository(context, database, { null })
             fun group(a: String, b: String) = """{"remarks":"Group","outbounds":[
                 {"tag":"proxy-a","protocol":"socks","settings":{"address":"$a","port":1080}},
                 {"tag":"proxy-b","protocol":"socks","settings":{"address":"$b","port":1080}}],

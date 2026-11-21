@@ -37,10 +37,10 @@ TUN-устройство создаёт сам `VpnService` (как и рань�
 
 ```powershell
 go install golang.org/x/mobile/cmd/gomobile@latest
-go get -tool golang.org/x/mobile/cmd/gobind@latest
+go install golang.org/x/mobile/cmd/gobind@latest
 gomobile init
 gomobile bind "-target=android/arm64,android/arm,android/amd64" `
-  "-androidapi=26" "-tags=with_gvisor,cmfa" `
+  "-androidapi=26" "-tags=with_gvisor,cmfa" "-trimpath" `
   "-ldflags=-s -w -X github.com/metacubex/mihomo/constant.Version=1.19.34 -extldflags=-Wl,-z,max-page-size=16384" `
   "-o=nyampycore.aar" "."
 ```

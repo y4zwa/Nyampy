@@ -1188,7 +1188,11 @@ fun ConnectionScreen(
                         icon = R.drawable.ic_settings,
                         rotateIconOnClick = true,
                         checked = settings.incySpoof,
-                        onChange = { enabled -> onChangeSettings { it.copy(incySpoof = enabled) } },
+                        // Incy is a face of the same spoof: turning it on while the
+                        // spoof is off would do nothing, so it turns the spoof on too.
+                        onChange = { enabled ->
+                            onChangeSettings { it.copy(incySpoof = enabled, happSpoof = it.happSpoof || enabled) }
+                        },
                     )
                 },
                 {

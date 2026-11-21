@@ -44,7 +44,7 @@ You need JDK 17 and the Android SDK with `compileSdk 37`.
 
 The finished APKs, one for each architecture, will be in `app/build/outputs/apk/release/`.
 
-On the first build, the core library (AAR) is downloaded from the `core-1.19.34-5` release and its sha256 checksum is verified. If you have no network access, place the `nyampycore.aar` file in `app/libs/` yourself. The checksum is still verified, and a file with a different checksum will not be accepted.
+On the first build, the core library (AAR) is downloaded from the `core-1.19.34-6` release and its sha256 checksum is verified. If you have no network access, place the `nyampycore.aar` file in `app/libs/` yourself. The checksum is still verified, and a file with a different checksum will not be accepted.
 
 ## Credits
 
