@@ -179,14 +179,13 @@ data class UiSettings(
     val navigationBarBlurIntensity: Float = 0.60f,
     /**
      * Whether navigation uses the classic edge-to-edge MD3 navigation bar instead of the
-     * floating pills. Null until the user flips it: then it follows the screen — on for small
-     * (narrow) windows the floating bar doesn't fit, off everywhere else.
+     * floating pills. Null until the user flips it: the floating pills are the default,
+     * whatever the screen's width.
      */
     val classicNavigationBar: Boolean? = null,
     /**
-     * Whether the app lays out for a small screen — tighter margins, the classic bar by
-     * default — forced on or off by a long tap on the classic bar's toggle. Null follows the
-     * window's width.
+     * Whether the app lays out for a small screen — tighter margins — forced on or off by
+     * a long tap on the classic bar's toggle. Null follows the window's width.
      */
     val smallScreen: Boolean? = null,
     /**

@@ -1527,8 +1527,8 @@ private fun WarpActionRow(
         ) {
             Surface(
                 shape = RoundedCornerShape(12.dp),
-                color = colors.tertiaryContainer,
-                contentColor = colors.onTertiaryContainer,
+                color = colors.secondaryContainer,
+                contentColor = colors.onSecondaryContainer,
                 modifier = Modifier.size(40.dp),
             ) {
                 Box(contentAlignment = Alignment.Center) {

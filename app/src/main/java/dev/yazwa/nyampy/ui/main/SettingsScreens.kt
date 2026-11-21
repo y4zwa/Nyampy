@@ -305,7 +305,7 @@ fun InterfaceScreen(
                         } else {
                             R.drawable.ic_call_to_action
                         },
-                        // Shows the resolved state: unpicked, the screen's default.
+                        // Shows the resolved state: unpicked, the pills — off.
                         checked = classicBar,
                         onChange = { checked ->
                             onChange { it.copy(classicNavigationBar = checked) }

@@ -23,8 +23,8 @@ private const val WIDE_SCREEN_WIDTH_DP = 700
 
 /**
  * Whether the window is a small, narrow one: there the side margins tighten to MD3's
- * compact 16dp, and the classic navigation bar becomes the default. The user can force it
- * either way (see UiSettings.smallScreen); otherwise the width decides.
+ * compact 16dp. The user can force it either way (see UiSettings.smallScreen); otherwise
+ * the width decides.
  */
 @Composable
 fun isSmallScreen(): Boolean = LocalUiSettings.current.smallScreen ?: smallScreenByWidth()
@@ -54,10 +54,10 @@ fun isWideScreen(): Boolean =
  */
 val LocalBarReservedHeight = staticCompositionLocalOf { FloatingBottomBarReservedHeight }
 
-/** The classic navigation bar's resolved state: the user's pick, or the screen's default. */
+/** The classic navigation bar's resolved state: the user's pick, off until picked. */
 @Composable
 fun classicNavigationBar(): Boolean =
-    LocalUiSettings.current.classicNavigationBar ?: isSmallScreen()
+    LocalUiSettings.current.classicNavigationBar ?: false
 
 /** The gap between the screen's side edges and the content: 24dp, 16dp on small screens,
  *  32dp on wide ones — the same breath Home takes, so the split's halves sit symmetric. */

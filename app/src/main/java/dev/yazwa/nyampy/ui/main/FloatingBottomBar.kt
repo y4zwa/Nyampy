@@ -218,8 +218,8 @@ fun FloatingBottomBar(
     categoryFocusRequester: FocusRequester? = null,
 ) {
     val motion = MaterialTheme.motionScheme
-    // The classic bar stands in for the pills when picked (or, unpicked, on small screens);
-    // flipping the setting crossfades one into the other.
+    // The classic bar stands in for the pills when picked; flipping the setting crossfades
+    // one into the other.
     AnimatedContent(
         targetState = classicNavigationBar(),
         transitionSpec = {
