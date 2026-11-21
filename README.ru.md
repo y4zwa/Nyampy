@@ -1,61 +1,60 @@
-<img src="icon.svg" width="96" alt="Nyampy" />
+<img src="icon.svg" width="72" align="right" alt="Nyampy">
 
 # Nyampy
 
-Ещё один Android-клиент для VLESS и других — в Material Design 3 Expressive и на ядре
-Mihomo.
+Android-клиент для протоколов, которые поддерживает ядро mihomo: VLESS, VMess, Trojan, Shadowsocks, WireGuard, Hysteria2 и других. Оформление выполнено в Material 3 Expressive. Цвета можно брать из обоев, есть чёрная тема для AMOLED-экранов и выбор собственного акцентного цвета.
 
-*English version: [README.md](README.md)*
+Требуется Android 8.0 или новее. [Скачать APK](https://github.com/y4zwa/Nyampy/releases/latest)
 
-> **Альфа-версия.** Всё ещё в разработке. Если она зависнет — а оно может — пиши в
-> [Issues](https://github.com/y4zwa/Nyampy/issues).
+Приложение пока в альфа-версии. Если что-то работает неправильно, напишите в [issues](https://github.com/y4zwa/Nyampy/issues).
 
-## Требования
+[English](README.md)
 
-Android 8.0 (API 26) или новее.
+## Возможности
 
-## Протоколы
+**Источники серверов.** Серверы можно добавить по ссылке-подписке, из Clash/mihomo YAML (поддерживаются якоря и алиасы), из готового конфига, из файла или по QR-коду. Подписка обновляется по вашему запросу. Группы можно закрепить, а серверы, добавленные вручную, показываются вместе с группами.
 
-VLESS, VMess, Trojan, Shadowsocks, SOCKS, HTTP, WireGuard (включая AmneziaWG),
-Hysteria2.
+**WARP.** Одно нажатие создаёт аккаунт Cloudflare и добавляет группу адресов WARP.
 
-XHTTP сохраняет `extra` из ссылки, включая раздельную загрузку: Xray-овский
-`downloadSettings` переводится в плоский `download-settings` ядра. В режиме
-`stream-one` пара выбрасывается — ядро её не принимает (`xhttp mode "stream-one" cannot
-be used with download-settings`), и весь сервер не поднялся бы.
+**Маршрутизация.** Можно пропускать через туннель весь трафик или направлять напрямую трафик своего региона: поддерживаются RU, CN, IR, AF, ID, TR и BR. Отдельно задаётся список приложений, которые в туннель не попадают.
 
-## IPv6
+**Задержки и трафик.** Задержка измеряется так же, как её считает `url-test` в ядре. Счётчики учитывают весь трафик туннеля, в том числе соединения DIRECT.
 
-Туннель получает IPv6-адрес и маршрут (`2000::/3` в tun), а ядро работает с `ipv6: false`,
-DNS — с `dns.ipv6: false`. Это защита от утечки, а не выключатель v6: запросы, которые
-доходят до резолвера самого ядра (порт 53), получают пустой AAAA-ответ, а v6-трафик уходит
-в туннель и никогда мимо прокси. Приложение или системный резолвер, спрашивающий по
-DoT/DoH, всё равно получает настоящие AAAA — поэтому сайты, доступные только по v6,
-работают, если у выбранного сервера есть IPv6. Открываются они или нет — свойство
-сервера, а не клиента.
+**Переключение без разрыва.** При смене сервера или режима туннель не создаётся заново: ядро получает новый конфиг, а TUN-интерфейс остаётся прежним.
 
-Счётчики трафика считают весь туннель, включая DIRECT.
+## Поддерживаемые протоколы
+
+`VLESS` `VMess` `Trojan` `Shadowsocks` `SOCKS` `HTTP` `WireGuard` / `AmneziaWG` `Hysteria2` `TUIC` `AnyTLS` `Snell` `Mieru` `Sudoku` `ShadowQuic` `TrustTunnel` `Masque`
+
+У XHTTP из ссылки сохраняется параметр `extra`, в том числе раздельная загрузка. В режиме `stream-one` параметр `download-settings` отбрасывается: ядро его не принимает, и из-за него не запустился бы весь сервер.
+
+## Как устроен туннель
+
+Туннель работает только по IPv4. Адрес интерфейса — `172.19.0.1/30`, в ядре указано `ipv6: false`, DNS не возвращает AAAA-записи. Это сделано потому, что при наличии второго семейства адресов некоторые приложения решали, что связи нет, хотя браузер продолжал работать через IPv4.
+
+DNS работает в режиме fake-IP, запросы обрабатывает ядро.
 
 ## Сборка
 
-```shell
+Нужны JDK 17 и Android SDK с `compileSdk 37`.
+
+```
 ./gradlew :app:assembleRelease
 ```
 
-При первой сборке готовый AAR ядра скачивается из пришпиленного релиза
-`core-1.19.34-5` в `app/libs/`, с проверкой sha256. Без сети положи `nyampycore.aar`
-туда руками — совпадение дайджеста всё равно решает, можно ли его использовать.
+Готовые APK, по одному для каждой архитектуры, окажутся в `app/build/outputs/apk/release/`.
 
-## Спасибо
+При первой сборке библиотека ядра (AAR) скачивается из релиза `core-1.19.34-5`, и проверяется её контрольная сумма sha256. Если доступа к сети нет, положите файл `nyampycore.aar` в `app/libs/` самостоятельно. Контрольная сумма всё равно будет проверена, и файл с другой суммой принят не будет.
 
-- [Mihomo](https://github.com/MetaCubeX/mihomo) — ядро
-- [Chumpy](https://github.com/ChumpyXray/Chumpy) — клиент, от которого форкнулись
-- [v2rayNG](https://github.com/2dust/v2rayNG) — парсеры ссылок (порт из его `fmt/`)
-- [zxing](https://github.com/zxing/zxing) — QR-сканер
-- [Material Symbols](https://fonts.google.com/material) — иконки
-- [Twemoji](https://github.com/jdecked/twemoji) — флаги (CC-BY 4.0)
+## Благодарности
+
+- Ядро: [mihomo](https://github.com/MetaCubeX/mihomo)
+- Проект развился из [Chumpy](https://github.com/ChumpyXray/Chumpy)
+- Разбор ссылок перенесён из [v2rayNG](https://github.com/2dust/v2rayNG)
+- Сканер QR-кодов: [zxing](https://github.com/zxing/zxing)
+- Иконки: [Material Symbols](https://fonts.google.com/material)
+- Флаги: [Twemoji](https://github.com/jdecked/twemoji) (CC-BY 4.0)
 
 ## Лицензия
 
-GPL-3.0 — см. [LICENSE](LICENSE). Форк линкует ядро Mihomo под GPL-3.0; оригинальный
-Chumpy был под MIT, его уведомление сохранено в [NOTICE](NOTICE).
+GPL-3.0, текст в файле [LICENSE](LICENSE). Приложение использует ядро mihomo, которое распространяется под GPL-3.0. Исходный Chumpy был под лицензией MIT, его уведомление сохранено в файле [NOTICE](NOTICE).
