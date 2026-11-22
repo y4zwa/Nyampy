@@ -69,9 +69,9 @@ import java.io.File
 
 /**
  * The font setting, picked right in its row: one square "Aa" tile per font, set in the font
- * itself — the system default, Inter, then the user's imports alphabetically — and the
- * stadium-shaped import button last. The supporting line names the active font, since the
- * tiles carry no names of their own.
+ * itself - the system default, Nunito Bold, Inter, then the user's imports alphabetically -
+ * and the stadium-shaped import button last. The supporting line names the active font,
+ * since the tiles carry no names of their own.
  *
  * While the tiles fit beside the title they sit at the row's end like the theme buttons.
  * Once they would crowd the title, the title steps aside: the tiles take the row's full width
@@ -104,13 +104,15 @@ fun FontPickerRow(
     // A missing custom file falls back like the theme does — to the system default, which
     // then shows selected too.
     val active = when {
-        selected == FontRegistry.SYSTEM_ID || selected == FontRegistry.INTER_ID -> selected
+        selected == FontRegistry.SYSTEM_ID || selected == FontRegistry.INTER_ID ||
+            selected == FontRegistry.NUNITO_ID -> selected
         customFonts.any { it.name == selected } -> selected
         else -> FontRegistry.SYSTEM_ID
     }
     val activeName = when (active) {
         FontRegistry.SYSTEM_ID -> stringResource(R.string.fonts_system)
         FontRegistry.INTER_ID -> stringResource(R.string.fonts_inter)
+        FontRegistry.NUNITO_ID -> stringResource(R.string.fonts_nunito)
         else -> active.substringBeforeLast('.')
     }
     val title = stringResource(R.string.settings_fonts)
@@ -151,6 +153,15 @@ fun FontPickerRow(
             onClick = {
                 importError = null
                 onSelect(FontRegistry.INTER_ID)
+            },
+        )
+        FontTile(
+            family = FontRegistry.nunito,
+            label = stringResource(R.string.fonts_nunito),
+            selected = active == FontRegistry.NUNITO_ID,
+            onClick = {
+                importError = null
+                onSelect(FontRegistry.NUNITO_ID)
             },
         )
         // The user's own fonts sit apart behind the palette's strip; with none, no strip.

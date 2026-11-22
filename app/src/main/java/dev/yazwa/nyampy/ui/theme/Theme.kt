@@ -194,6 +194,7 @@ private fun ColorScheme.amoled(): ColorScheme = copy(
 @Composable
 private fun appFontFamily(fontId: String): FontFamily? = when {
     fontId == FontRegistry.SYSTEM_ID -> null
+    fontId == FontRegistry.NUNITO_ID -> FontRegistry.nunito
     fontId == FontRegistry.INTER_ID -> FontRegistry.inter
     else -> {
         val context = LocalContext.current

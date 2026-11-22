@@ -12,9 +12,9 @@ import java.io.File
 import android.graphics.Typeface
 
 /**
- * The fonts selectable app-wide: the system default, Inter bundled with the app, and font
- * files the user imported. A font is identified by a stable string id — [SYSTEM_ID],
- * [INTER_ID] or the imported file's name.
+ * The fonts selectable app-wide: the system default, Nunito Bold and Inter bundled with the
+ * app, and font files the user imported. A font is identified by a stable string id -
+ * [SYSTEM_ID], [NUNITO_ID], [INTER_ID] or the imported file's name.
  */
 object FontRegistry {
     private val changes = kotlinx.coroutines.flow.MutableStateFlow(0L)
@@ -22,6 +22,7 @@ object FontRegistry {
 
     const val SYSTEM_ID = "system"
     const val INTER_ID = "inter"
+    const val NUNITO_ID = "nunito"
 
     /**
      * Inter as a variable font: one bundled file covering the whole weight axis, with the
@@ -42,6 +43,34 @@ object FontRegistry {
         ),
         Font(
             R.font.inter_variable,
+            weight = FontWeight.Bold,
+            variationSettings = FontVariation.Settings(FontVariation.weight(700)),
+        ),
+    )
+
+    /**
+     * Nunito Bold: the bundled variable file pinned to its 700 instance in every scale
+     * slot, so the whole interface wears that one weight instead of a synthesized fake
+     * bold. The file carries Cyrillic, which the app's own language needs.
+     */
+    val nunito = FontFamily(
+        Font(
+            R.font.nunito_variable,
+            weight = FontWeight.Normal,
+            variationSettings = FontVariation.Settings(FontVariation.weight(700)),
+        ),
+        Font(
+            R.font.nunito_variable,
+            weight = FontWeight.Medium,
+            variationSettings = FontVariation.Settings(FontVariation.weight(700)),
+        ),
+        Font(
+            R.font.nunito_variable,
+            weight = FontWeight.SemiBold,
+            variationSettings = FontVariation.Settings(FontVariation.weight(700)),
+        ),
+        Font(
+            R.font.nunito_variable,
             weight = FontWeight.Bold,
             variationSettings = FontVariation.Settings(FontVariation.weight(700)),
         ),

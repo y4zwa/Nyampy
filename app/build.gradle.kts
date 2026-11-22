@@ -35,21 +35,21 @@ android {
         if (releaseAssembled) 1 else 0
     if (releaseAssembled) buildNumberFile.writeText(buildNumber.toString())
 
-    // The version's own three numbers, handed out by hand: the global release — a new
-    // feature's mark, 0 while the app's whole functionality is still landing — and the
-    // minor release, raised on request. The third number is the build itself: the
-    // ever-counting one above, one less than it (the fork's first build is 1.0.0).
-    val majorVersion = 1
-    val minorVersion = 0
+    // The public version name lives in its own file, bumped by hand: the ever-counting
+    // build number above is the versionCode alone. Test builds that assemble a release
+    // APK bump that counter; the name a release carries must not ride along with them -
+    // twenty local test builds should not turn the next release into 1.0.28.
+    val versionNameFile = rootProject.file("version_name.properties")
+    val publicVersionName = versionNameFile.takeIf { it.isFile }
+        ?.readText()?.trim()?.takeIf { it.isNotEmpty() }
+        ?: "1.0.${(buildNumber - 1).coerceAtLeast(0)}"
 
     defaultConfig {
         applicationId = "dev.yazwa.nyampy"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
         versionCode = buildNumber
-        // Nyampy counts its own builds: the counter stays monotonic as versionCode, while
-        // the name a release carries starts at 1.0.0 for the fork's first build.
-        versionName = "$majorVersion.$minorVersion.${(buildNumber - 1).coerceAtLeast(0)}"
+        versionName = publicVersionName
         // The About page's build stamp: when this build was assembled, on the Moscow
         // clock with its offset said out loud. ROOT locale keeps it English, the app's
         // only language.

@@ -210,6 +210,7 @@
     <!-- Fonts -->
     <string name="fonts_system">System</string>
     <string name="fonts_inter" translatable="false">Inter</string>
+    <string name="fonts_nunito" translatable="false">Nunito Bold</string>
     <string name="fonts_add">Add font</string>
     <string name="fonts_delete_title">Delete this font?</string>
     <string name="fonts_delete_text">\"%1$s\" will be removed from the app. You can import it again any time.</string>
@@ -267,6 +268,7 @@
     <string name="notif_channel_vpn">VPN connection</string>
     <string name="notif_channel_vpn_desc">The ongoing connection status</string>
     <string name="notif_connected">Connected</string>
+    <string name="notif_speed" translatable="false">↓ %1$s   ↑ %2$s</string>
     <string name="notif_connecting">Connecting…</string>
     <string name="notif_disconnected">Disconnected</string>
     <string name="notif_profile_unknown">unknown server</string>

@@ -19,6 +19,7 @@ import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.os.RemoteException
 import android.os.StrictMode
+import android.os.SystemClock
 import android.util.Log
 import dev.yazwa.nyampy.MainActivity
 import dev.yazwa.nyampy.R
@@ -103,6 +104,13 @@ class NyampyVpnService : VpnService() {
          * and no longer.
          */
         private const val AUTHORIZATION_CHECK_MILLIS = 5_000L
+
+        /**
+         * How often the running notification's speed is refreshed. Two seconds keeps
+         * the number alive without turning the shade into a metronome; the system
+         * throttles anything much faster anyway.
+         */
+        private const val SPEED_SAMPLE_MILLIS = 2_000L
 
         /**
          * How many times in a row auto-reconnect may answer a foreign-VPN fall before it
@@ -313,6 +321,63 @@ class NyampyVpnService : VpnService() {
         }
     }
 
+    // ----------------------------------------------------- the notification's speed
+    /** The counters the last speed reading was taken from; worker-thread only. */
+    private var speedTotals: LongArray? = null
+    private var speedAtMillis = 0L
+
+    @Volatile
+    private var downBytesPerSecond = 0L
+
+    @Volatile
+    private var upBytesPerSecond = 0L
+
+    @Volatile
+    private var speedKnown = false
+
+    /**
+     * The running notification's live rate: the core's cumulative counters read every
+     * couple of seconds, the difference turned into bytes per second here. The read
+     * takes nothing from the stats loop - both look at the same counters, only
+     * [MihomoCore.trafficBytes] hands its share out.
+     */
+    private val speedSample: Runnable = Runnable {
+        if (destroyed || !MihomoCore.isRunning) return@Runnable
+        try {
+            worker.execute {
+                if (destroyed || !MihomoCore.isRunning) return@execute
+                val totals = MihomoCore.totals()
+                val now = SystemClock.elapsedRealtime()
+                val previous = speedTotals
+                if (previous != null) {
+                    val elapsed = (now - speedAtMillis).coerceAtLeast(1L)
+                    downBytesPerSecond = (totals[0] - previous[0]).coerceAtLeast(0L) * 1_000 / elapsed
+                    upBytesPerSecond = (totals[1] - previous[1]).coerceAtLeast(0L) * 1_000 / elapsed
+                }
+                speedTotals = totals
+                speedAtMillis = now
+                // The first reading has no interval to divide by yet: it only takes the
+                // baseline, and the line shows "0 B/s" until the next one lands.
+                speedKnown = true
+                mainHandler.post {
+                    if (!destroyed && MihomoCore.isRunning) refreshNotification()
+                }
+                mainHandler.postDelayed(speedSample, SPEED_SAMPLE_MILLIS)
+            }
+        } catch (_: RejectedExecutionException) {
+            // The service is going down; no notification is left to refresh.
+        }
+    }
+
+    private fun resetSpeed() {
+        speedTotals = null
+        speedAtMillis = 0L
+        downBytesPerSecond = 0L
+        upBytesPerSecond = 0L
+        // The line stands from the first frame as "0 B/s"; the first sample fills it in.
+        speedKnown = true
+    }
+
     /** Set by the auto-reconnect: the next tunnel outcome — up, or failed — edits the fall notice. */
     @Volatile
     private var announceAutoReconnect = false
@@ -500,6 +565,8 @@ class NyampyVpnService : VpnService() {
         settingsObserver?.stopWatching()
         settingsObserver = null
         commandGeneration.incrementAndGet()
+        mainHandler.removeCallbacks(speedSample)
+        resetSpeed()
         stopTunnelWatch()
         worker.execute {
             MihomoCore.stopLoopWatched()
@@ -562,6 +629,11 @@ class NyampyVpnService : VpnService() {
                 startTunnelWatch()
                 mainHandler.removeCallbacks(trafficSample)
                 mainHandler.post(trafficSample)
+                resetSpeed()
+                mainHandler.removeCallbacks(speedSample)
+                // The first pass only takes the baseline, so the line is up at once and
+                // the first real number lands one interval later.
+                mainHandler.post(speedSample)
                 if (announceAutoReconnect) {
                     announceAutoReconnect = false
                     notifyReconnected()
@@ -859,21 +931,22 @@ class NyampyVpnService : VpnService() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         val status = MihomoCore.currentStatus()
-        val profile = CoreConfigFile.readProfileName(this)?.let(::stripFlag)
-            ?: getString(R.string.notif_profile_unknown)
-        val subscription = CoreConfigFile.readSubscriptionName(this)
-        // The app's name and the state it is in share the title — "Nyampy • Connected" —
-        // and the line under it tells the hop the home card does: the subscription, an
-        // arrow, then the region — its flag emoji lifted off the way the list does. The
-        // "→" renders crooked in the notification's system font; the "›" chevron — the
-        // text twin of the chevron the cards point with — sits straight everywhere.
+        // The system prints the app's name above the notification already, so the title
+        // is just the state and the line under it the live rate: no hop, no duplicates.
         val state = when (status.state) {
             TunnelState.UP -> getString(R.string.notif_connected)
             TunnelState.CONNECTING -> getString(R.string.notif_connecting)
             else -> getString(R.string.notif_disconnected)
         }
-        val title = getString(R.string.app_name) + " " + getString(R.string.notif_separator) + " " + state
-        val text = if (subscription != null) "$subscription › $profile" else profile
+        val title = state
+        // While the tunnel runs, the line under the title is the live rate.
+        val speed = if (speedKnown) {
+            getString(R.string.notif_speed, formatRate(downBytesPerSecond), formatRate(upBytesPerSecond))
+        } else {
+            null
+        }
+        val showSpeed = status.state == TunnelState.UP && speed != null
+        val text = if (showSpeed) speed else null
         // The notification's own off switch: the same disconnect path the app and the QS
         // tile take, without opening anything.
         val disconnect = PendingIntent.getService(
@@ -912,6 +985,15 @@ class NyampyVpnService : VpnService() {
 
     private fun cancelNotification() {
         getSystemService(NotificationManager::class.java)?.cancel(NOTIFICATION_ID)
+    }
+
+    /** Re-posts the running notification in place: the speed line changes, nothing else. */
+    private fun refreshNotification() {
+        try {
+            getSystemService(NotificationManager::class.java)?.notify(NOTIFICATION_ID, buildNotification())
+        } catch (e: Exception) {
+            Log.w(TAG, "Notification refresh failed", e)
+        }
     }
 
     /**

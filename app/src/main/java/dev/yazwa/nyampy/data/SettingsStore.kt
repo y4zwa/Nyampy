@@ -134,7 +134,7 @@ data class UiSettings(
     val happUserId: String = "",
     val happHwid: String = "",
     /** The [FontRegistry] id of the app-wide typeface; Inter out of the box. */
-    val fontId: String = FontRegistry.INTER_ID,
+    val fontId: String = FontRegistry.NUNITO_ID,
     /** How the server list draws each exit's country. */
     val flagStyle: FlagStyle = FlagStyle.TWEMOJI,
     /** The launcher icon variant; see [IconVariant]. */
@@ -298,6 +298,10 @@ object SettingsStore {
         val versionsMigrated = prefs.getBoolean(KEY_HAPP_VERSIONS_MIGRATED, false)
         val storedIncyVersion = prefs.getString("incy_app_version", null).orEmpty()
         val storedHappVersion = prefs.getString(KEY_HAPP_APP_VERSION, null).orEmpty()
+        // The bundled default moved from Inter to Nunito Bold; a stored Inter was the old
+        // default, not a pick, so it rides the move once. A deliberate pick survives.
+        val fontMigrated = prefs.getBoolean(KEY_FONT_DEFAULT_MIGRATED, false)
+        val storedFont = prefs.getString(KEY_FONT, null)
         val settings = UiSettings(
             themeMode = enumEntry(prefs.getString(KEY_THEME, null), ThemeMode.SYSTEM),
             accent = enumEntry(prefs.getString(KEY_ACCENT, null), Accent.ADAPTIVE),
@@ -338,7 +342,11 @@ object SettingsStore {
                 .ifBlank { HappSpoof.randomUserId() },
             happHwid = prefs.getString(KEY_HAPP_HWID, null).orEmpty()
                 .ifBlank { HappSpoof.randomHwid() },
-            fontId = prefs.getString(KEY_FONT, null) ?: FontRegistry.INTER_ID,
+            fontId = when {
+                storedFont == null -> FontRegistry.NUNITO_ID
+                !fontMigrated && storedFont == FontRegistry.INTER_ID -> FontRegistry.NUNITO_ID
+                else -> storedFont
+            },
             flagStyle = enumEntry(prefs.getString(KEY_FLAG_STYLE, null), FlagStyle.TWEMOJI),
             iconVariant = enumEntry(prefs.getString(KEY_ICON_VARIANT, null), IconVariant.NYAMPY),
             customAccent = prefs.getInt(KEY_CUSTOM_ACCENT, 0xFF6FACED.toInt()),
@@ -368,9 +376,12 @@ object SettingsStore {
                 null
             },
         )
-        if (identityBlank || !versionsMigrated) {
+        if (identityBlank || !versionsMigrated || !fontMigrated) {
             write(context, settings)
-            prefs.edit { putBoolean(KEY_HAPP_VERSIONS_MIGRATED, true) }
+            prefs.edit {
+                putBoolean(KEY_HAPP_VERSIONS_MIGRATED, true)
+                putBoolean(KEY_FONT_DEFAULT_MIGRATED, true)
+            }
         }
         return settings
     }
@@ -470,6 +481,7 @@ object SettingsStore {
     private const val KEY_HAPP_HWID = "happ_hwid"
     private const val KEY_HAPP_VERSIONS_MIGRATED = "happ_versions_migrated"
     private const val KEY_FONT = "font"
+    private const val KEY_FONT_DEFAULT_MIGRATED = "font_default_migrated"
     private const val KEY_FLAG_STYLE = "flag_style"
     private const val KEY_ICON_VARIANT = "icon_variant"
     private const val KEY_CUSTOM_ACCENT = "custom_accent"

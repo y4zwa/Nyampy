@@ -2420,10 +2420,11 @@ private fun ServersEmpty() {
 
 /**
  * One server row: the remark as the headline, the endpoint and protocol in the supporting
- * line, the last real ping after the name — the accent from [HIGH_PING_MILLIS] on — and the
+ * line, the last real ping after the name - green for a good number, amber for a fair one,
+ * red for a poor one, and the row's own quiet grey when there is no result yet - and the
  * spinning cookie marking the pick. Selectable at any time, tunnel or not; a tap that lands
- * while the tunnel is up swaps the server in place. A long press opens the row's own menu —
- * the pin, the link, the delete — and a pinned row wears the pin itself, stuck through its
+ * while the tunnel is up swaps the server in place. A long press opens the row's own menu -
+ * the pin, the link, the delete - and a pinned row wears the pin itself, stuck through its
  * top-right corner at its own angle.
  */
 @OptIn(ExperimentalFoundationApi::class)
@@ -2487,10 +2488,15 @@ private fun ServerRow(
         label = "server row dim",
     )
     val contentColor = lerp(colors.onSurface, colors.onPrimaryContainer, selection)
-    val extraColor = if ((profile.testDelayMillis ?: 0L) >= HIGH_PING_MILLIS) {
-        colors.primary
-    } else {
-        contentColor.copy(alpha = contentColor.alpha * 0.62f)
+    val displayedDelay = profile.testDelayMillis?.takeIf { it >= 0 }
+    // The ping's three bands wear fixed colors, not the theme's accent: a good number
+    // reads green wherever the row stands, a fair one amber, a poor one red. A row with
+    // no result yet keeps the quiet grey it always had - "can't ping" included.
+    val extraColor = when {
+        displayedDelay == null -> contentColor.copy(alpha = contentColor.alpha * 0.62f)
+        displayedDelay < GOOD_PING_MILLIS -> GOOD_PING_COLOR
+        displayedDelay < FAIR_PING_MILLIS -> FAIR_PING_COLOR
+        else -> POOR_PING_COLOR
     }
     val supportingColor = lerp(
         colors.onSurfaceVariant,
@@ -2512,7 +2518,6 @@ private fun ServerRow(
     }
     val iconColor = lerp(colors.onSecondaryContainer, colors.onPrimary, selection)
     val poke = rememberHapticPoke()
-    val displayedDelay = profile.testDelayMillis?.takeIf { it >= 0 }
     val hasPingResult = displayedDelay != null || profile.lastTestAt != null
     val resultPoke = rememberHapticSoftPoke()
     var measured by remember(profile.id) { mutableStateOf(false) }
@@ -3073,8 +3078,17 @@ private fun CardActionsMenu(
     }
 }
 
-/** From this ping on (ms) a server counts as slow, and its ping is painted in the accent. */
-private const val HIGH_PING_MILLIS = 150
+/**
+ * The ping's bands, in milliseconds: under [GOOD_PING_MILLIS] is good, under
+ * [FAIR_PING_MILLIS] is fair, the rest is poor. The colors are fixed on purpose - the
+ * theme's accent never stands for a number, and these read the same on a selected row.
+ */
+private const val GOOD_PING_MILLIS = 100L
+private const val FAIR_PING_MILLIS = 300L
+
+private val GOOD_PING_COLOR = Color(0xFF2E9E44)
+private val FAIR_PING_COLOR = Color(0xFFD99100)
+private val POOR_PING_COLOR = Color(0xFFD93A36)
 
 /**
  * The sort menu's [menuHost] claim: no row ever owns it, so the id never collides with a

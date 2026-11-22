@@ -411,6 +411,22 @@ object MihomoCore {
         }
     }
 
+    /**
+     * The core's cumulative counters as {down, up}. Unlike [trafficBytes] this read
+     * takes nothing away, so the notification's live speed and the stats loop can look
+     * at the same counters without stealing each other's deltas.
+     */
+    @Synchronized
+    fun totals(): LongArray {
+        if (!isRunning) return longArrayOf(0L, 0L)
+        return try {
+            longArrayOf(Nyampycore.downTotal(), Nyampycore.upTotal())
+        } catch (e: Exception) {
+            log(Log.WARN, "traffic totals failed", e)
+            longArrayOf(0L, 0L)
+        }
+    }
+
     @Synchronized
     fun sampleTraffic() {
         val delta = queryTrafficBytes()
