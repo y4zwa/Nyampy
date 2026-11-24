@@ -1310,6 +1310,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         }
 
                         else -> {
+                            // A bring-up is the card's future, not its silence: the
+                            // switch to another server is named the moment it is asked
+                            // for, not when the tunnel finally lands on it. The old
+                            // server's name lingers on the card otherwise, and the one
+                            // being dialed is exactly what the user is waiting on.
+                            if (status.state == TunnelState.CONNECTING) {
+                                val pending = withContext(Dispatchers.IO) {
+                                    selectedProfile.value?.let { profile ->
+                                        ActiveIdentity(
+                                            profile,
+                                            profile.subscriptionId?.let { id -> repository.subscriptionById(id) },
+                                        )
+                                    }
+                                }
+                                if (pending != null && tunnelStatus.value.state != TunnelState.UP) {
+                                    activeIdentity.value = pending
+                                }
+                            }
                             if (status.state == TunnelState.DOWN) activeIdentity.value = null
                             pingJob?.cancel()
                             _home.update {

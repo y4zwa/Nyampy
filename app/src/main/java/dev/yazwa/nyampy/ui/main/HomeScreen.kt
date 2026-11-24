@@ -594,7 +594,10 @@ private fun ConnectButton(
         label = "button content",
     )
     val pageRequester = LocalHomePageFocusRequester.current
-    val busy = state == TunnelState.CONNECTING || state == TunnelState.DISCONNECTING
+    // Only the teardown itself is exempt from a tap: a bring-up in flight is the user's
+    // own tap away from being called off, and the button that started it is the one that
+    // ends it — the same hand, the same place.
+    val busy = state == TunnelState.DISCONNECTING
     // The tap itself pokes like every other button; the result (up or failed) answers later.
     val poke = rememberHapticPoke()
     Button(
@@ -604,7 +607,11 @@ private fun ConnectButton(
             // off the screen's loudest button exactly when it starts working.
             if (busy) return@Button
             poke()
-            if (up) onDisconnect() else onConnect()
+            when (state) {
+                // Connecting is a promise, not a lock: the tap withdraws it.
+                TunnelState.UP, TunnelState.CONNECTING -> onDisconnect()
+                else -> onConnect()
+            }
         },
         colors = ButtonDefaults.buttonColors(
             containerColor = container,

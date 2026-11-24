@@ -4,8 +4,10 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.drawable.Icon
 import android.net.ConnectivityManager
@@ -17,6 +19,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.ParcelFileDescriptor
+import android.os.PowerManager
 import android.os.RemoteException
 import android.os.StrictMode
 import android.os.SystemClock
@@ -101,14 +104,21 @@ class NyampyVpnService : VpnService() {
          * How often the authorization is re-asked while the tunnel runs. prepare() answers
          * null exactly while this app is the system's VPN of record, so a ROM that never
          * delivers onRevoke leaves a dead VPN claiming to be up for at most this long —
-         * and no longer.
+         * and no longer. The question costs a binder round trip, and nothing a user can
+         * see changes in the seconds between two answers: a quarter of a minute is the
+         * interactive cadence, a full one while the screen is off.
          */
-        private const val AUTHORIZATION_CHECK_MILLIS = 5_000L
+        private const val AUTHORIZATION_CHECK_MILLIS = 15_000L
+
+        /** [AUTHORIZATION_CHECK_MILLIS] with nobody looking: the same answer, one a minute. */
+        private const val AUTHORIZATION_CHECK_IDLE_MILLIS = 60_000L
 
         /**
          * How often the running notification's speed is refreshed. Two seconds keeps
          * the number alive without turning the shade into a metronome; the system
-         * throttles anything much faster anyway.
+         * throttles anything much faster anyway. Only while the screen is on and the
+         * notification is allowed to be seen: with nobody looking the counters are
+         * re-baselined on the way back instead of read every other second.
          */
         private const val SPEED_SAMPLE_MILLIS = 2_000L
 
@@ -126,6 +136,13 @@ class NyampyVpnService : VpnService() {
          * of a session lands exactly there.
          */
         private const val WARM_UP_BUDGET_MILLIS = 6_000L
+
+        /**
+         * The longest one warm-up probe may hold the worker. The budget above is the
+         * session's, not one request's: sliced this way the wait stays cancellable — a
+         * tap that calls the bring-up off lands on the next slice, not after six seconds.
+         */
+        private const val WARM_UP_SLICE_MILLIS = 2_000L
 
         const val ACTION_CONNECT = "dev.yazwa.nyampy.core.CONNECT"
         const val ACTION_DISCONNECT = "dev.yazwa.nyampy.core.DISCONNECT"
@@ -311,6 +328,17 @@ class NyampyVpnService : VpnService() {
     /** The handover timer's own looper; holds re-dials and authorization checks only. */
     private val mainHandler = Handler(Looper.getMainLooper())
 
+    /**
+     * Whether the screen is on. The running notification's rate line is the only reader
+     * the speed sampler has, and a screen that is off has none: the tick keeps the core
+     * process awake for a number nobody is looking at. Seeded from the power manager at
+     * service creation, then followed off the system's own broadcasts.
+     */
+    @Volatile
+    private var screenOn = true
+
+    private var screenReceiver: BroadcastReceiver? = null
+
     private val trafficSample: Runnable = Runnable {
         if (destroyed || !MihomoCore.isRunning) return@Runnable
         worker.execute {
@@ -343,6 +371,10 @@ class NyampyVpnService : VpnService() {
      */
     private val speedSample: Runnable = Runnable {
         if (destroyed || !MihomoCore.isRunning) return@Runnable
+        // Nobody is reading the line: the callbacks are pulled on the screen going off,
+        // and this is the belt to that suspenders — a sample that slips through while the
+        // shade is closed still finds the screen dark and stops here.
+        if (!screenOn || !notificationsShown()) return@Runnable
         try {
             worker.execute {
                 if (destroyed || !MihomoCore.isRunning) return@execute
@@ -376,6 +408,68 @@ class NyampyVpnService : VpnService() {
         upBytesPerSecond = 0L
         // The line stands from the first frame as "0 B/s"; the first sample fills it in.
         speedKnown = true
+    }
+
+    /**
+     * Starts the rate line's sampler: only for a running tunnel the user can actually
+     * look at — the screen on, and the notification allowed to be posted at all. The
+     * counters kept climbing while nobody looked, so the first pass takes a fresh
+     * baseline instead of handing the shade a rate averaged over the dark hours.
+     */
+    private fun startSpeedSamples() {
+        mainHandler.removeCallbacks(speedSample)
+        resetSpeed()
+        if (destroyed || !MihomoCore.isRunning || !screenOn || !notificationsShown()) return
+        mainHandler.post(speedSample)
+    }
+
+    private fun stopSpeedSamples() {
+        mainHandler.removeCallbacks(speedSample)
+        resetSpeed()
+    }
+
+    /**
+     * A notification the system would drop on the floor is still a job for this process:
+     * building it and asking the manager to post it every two seconds. The manager knows
+     * both answers — the app's own switch and the channel's.
+     */
+    private fun notificationsShown(): Boolean {
+        val manager = getSystemService(NotificationManager::class.java) ?: return false
+        if (!manager.areNotificationsEnabled()) return false
+        val channel = manager.getNotificationChannel(CHANNEL_ID) ?: return true
+        return channel.importance != NotificationManager.IMPORTANCE_NONE
+    }
+
+    private fun setScreenOn(on: Boolean) {
+        if (screenOn == on) return
+        screenOn = on
+        if (!MihomoCore.isRunning || destroyed) return
+        if (on) startSpeedSamples() else stopSpeedSamples()
+    }
+
+    /** Follows the screen's own broadcasts for as long as the service lives. */
+    private fun startScreenWatch() {
+        if (screenReceiver != null) return
+        screenOn = getSystemService(PowerManager::class.java)?.isInteractive ?: true
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                when (intent?.action) {
+                    Intent.ACTION_SCREEN_ON -> setScreenOn(true)
+                    Intent.ACTION_SCREEN_OFF -> setScreenOn(false)
+                }
+            }
+        }
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_ON)
+            addAction(Intent.ACTION_SCREEN_OFF)
+        }
+        registerReceiver(receiver, filter)
+        screenReceiver = receiver
+    }
+
+    private fun stopScreenWatch() {
+        screenReceiver?.let { runCatching { unregisterReceiver(it) } }
+        screenReceiver = null
     }
 
     /** Set by the auto-reconnect: the next tunnel outcome — up, or failed — edits the fall notice. */
@@ -428,10 +522,14 @@ class NyampyVpnService : VpnService() {
                 // A tunnel that stays up forgives the count: whatever fought it before,
                 // this one holds.
                 autoReconnectAttempts = 0
-                mainHandler.postDelayed(authorizationCheck, AUTHORIZATION_CHECK_MILLIS)
+                mainHandler.postDelayed(authorizationCheck, authorizationCheckDelay())
             }
         }
     }
+
+    /** The re-ask cadence: a quarter of a minute with the screen on, a full one without. */
+    private fun authorizationCheckDelay(): Long =
+        if (screenOn) AUTHORIZATION_CHECK_MILLIS else AUTHORIZATION_CHECK_IDLE_MILLIS
 
     /**
      * Whether a VPN other than this one routes this app's traffic now — the app is
@@ -516,6 +614,7 @@ class NyampyVpnService : VpnService() {
         }
         settingsObserver = observer
         observer.startWatching()
+        startScreenWatch()
     }
 
     override fun onBind(intent: Intent) =
@@ -565,8 +664,8 @@ class NyampyVpnService : VpnService() {
         settingsObserver?.stopWatching()
         settingsObserver = null
         commandGeneration.incrementAndGet()
-        mainHandler.removeCallbacks(speedSample)
-        resetSpeed()
+        stopSpeedSamples()
+        stopScreenWatch()
         stopTunnelWatch()
         worker.execute {
             MihomoCore.stopLoopWatched()
@@ -584,6 +683,9 @@ class NyampyVpnService : VpnService() {
         MihomoCore.publish(TunnelStatus(TunnelState.CONNECTING))
         worker.execute {
             if (generation != commandGeneration.get()) return@execute
+            // A queue that reached this task is not a promise it must keep: init can
+            // take its time, and the tap that withdrew it must not wait that out.
+            if (!MihomoCore.awaitInitCancellable { generation != commandGeneration.get() }) return@execute
             // A new attempt supersedes whatever fall the last one announced.
             cancelAlert()
             try {
@@ -621,7 +723,7 @@ class NyampyVpnService : VpnService() {
                 // Google app latches onto "you are offline" and stays there until it is
                 // restarted, which reads exactly like a dead tunnel. The session is only
                 // announced once a request has come back through it.
-                warmUpTunnel()
+                warmUpTunnel(generation)
                 if (generation != commandGeneration.get()) return@execute
                 MihomoCore.publish(TunnelStatus(TunnelState.UP))
                 // The guards ride with the running tunnel: handovers under it re-dial it,
@@ -629,11 +731,9 @@ class NyampyVpnService : VpnService() {
                 startTunnelWatch()
                 mainHandler.removeCallbacks(trafficSample)
                 mainHandler.post(trafficSample)
-                resetSpeed()
-                mainHandler.removeCallbacks(speedSample)
                 // The first pass only takes the baseline, so the line is up at once and
                 // the first real number lands one interval later.
-                mainHandler.post(speedSample)
+                startSpeedSamples()
                 if (announceAutoReconnect) {
                     announceAutoReconnect = false
                     notifyReconnected()
@@ -790,7 +890,7 @@ class NyampyVpnService : VpnService() {
                 networkWatch,
             )
             mainHandler.removeCallbacks(authorizationCheck)
-            mainHandler.postDelayed(authorizationCheck, AUTHORIZATION_CHECK_MILLIS)
+            mainHandler.postDelayed(authorizationCheck, authorizationCheckDelay())
         } catch (e: Exception) {
             watching = false
             connectivityManager = null
@@ -873,15 +973,19 @@ class NyampyVpnService : VpnService() {
      * it is dead through the ping chip, which is better than a tunnel that claims to be
      * up and silently blackholes every app.
      */
-    private fun warmUpTunnel() {
+    private fun warmUpTunnel(generation: Int) {
         val url = ConnectionStore.current(this).delayTestUrl
         val deadline = System.currentTimeMillis() + WARM_UP_BUDGET_MILLIS
         while (true) {
+            // The promise was withdrawn while it was being kept: the wait ends here,
+            // and the stop that queued behind this task finds nothing to undo.
+            if (generation != commandGeneration.get()) return
             val remaining = deadline - System.currentTimeMillis()
             if (remaining <= 0) break
-            // The probe may spend the whole remaining budget: a dead node then costs
-            // the budget once, not once per attempt.
-            if (MihomoCore.measureLiveDelay(url, timeoutMillis = remaining) >= 0) return
+            // One probe is bounded by a slice: a dead node still costs the budget once,
+            // but no single request can hold the worker (and a cancel) for all of it.
+            val slice = remaining.coerceAtMost(WARM_UP_SLICE_MILLIS)
+            if (MihomoCore.measureLiveDelay(url, timeoutMillis = slice) >= 0) return
             if (Thread.currentThread().isInterrupted) return
         }
         Log.w(TAG, "Warm-up: the tunnel answered nothing within $WARM_UP_BUDGET_MILLIS ms")
@@ -989,6 +1093,9 @@ class NyampyVpnService : VpnService() {
 
     /** Re-posts the running notification in place: the speed line changes, nothing else. */
     private fun refreshNotification() {
+        // A notification the system is not allowed to show is not built at all: the
+        // sampler already asks, and the tile's own settings write lands here too.
+        if (!notificationsShown()) return
         try {
             getSystemService(NotificationManager::class.java)?.notify(NOTIFICATION_ID, buildNotification())
         } catch (e: Exception) {

@@ -156,6 +156,21 @@ object MihomoCore {
     }
 
     /**
+     * Waits for the core's environment in short slices, asking [isCancelled] between them.
+     * A bring-up whose promise was withdrawn gets out of the way at once instead of
+     * sitting out the ten-second cap; a core that never initialises still fails the same
+     * way [awaitInit] does.
+     */
+    fun awaitInitCancellable(isCancelled: () -> Boolean): Boolean {
+        val deadline = System.currentTimeMillis() + 10_000L
+        while (System.currentTimeMillis() < deadline) {
+            if (isCancelled()) return false
+            if (initLatch.await(200, TimeUnit.MILLISECONDS)) return true
+        }
+        throw IllegalStateException("Core environment init timed out")
+    }
+
+    /**
      * The geo databases are shipped in the APK; mihomo wants them as plain files with its
      * own capitalisation, in its home directory. The copy is unconditional for the same
      * reason as before: replacing two slim files is cheaper than version bookkeeping.
