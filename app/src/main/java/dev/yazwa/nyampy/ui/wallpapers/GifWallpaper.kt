@@ -11,7 +11,6 @@ import android.os.Handler
 import android.os.Looper
 import androidx.annotation.RequiresApi
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -30,6 +29,16 @@ import java.io.File
 import java.io.IOException
 import kotlin.math.roundToInt
 
+/**
+ * The wallpaper's GIF, drawn as its first frame and never animated.
+ *
+ * An animated wallpaper re-records the whole backdrop on every frame it advances, and on a
+ * phone that came out as a full-screen redraw every 33 ms — around the clock, with the
+ * screen sitting idle — leaving no headroom for the frames a tap or a page turn needs
+ * (7 ms of the 8.3 a 120 Hz frame has, before anything else happens). A wallpaper loop is
+ * not something anyone watches; yazwa's call, 2026-11-25. [GifWallpaper.start] is still
+ * there for the day this becomes a choice.
+ */
 @Composable
 internal fun rememberGifWallpaper(wallpaper: DecodedWallpaper): GifWallpaper? {
     val file = wallpaper.gifFile ?: return null
@@ -38,16 +47,9 @@ internal fun rememberGifWallpaper(wallpaper: DecodedWallpaper): GifWallpaper? {
     if (lifecycleState != Lifecycle.State.RESUMED) return null
 
     return key(wallpaper) {
-        val gif by produceState<GifWallpaper?>(null) {
+        produceState<GifWallpaper?>(null) {
             value = withContext(Dispatchers.IO) { GifWallpaper.decode(file) }
-        }
-        gif?.let { animation ->
-            DisposableEffect(animation) {
-                animation.start()
-                onDispose { animation.stop() }
-            }
-        }
-        gif
+        }.value
     }
 }
 

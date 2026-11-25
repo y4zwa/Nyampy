@@ -2,12 +2,10 @@ package dev.yazwa.nyampy.ui.theme
 
 import android.content.Context
 import android.os.Build
-import androidx.compose.animation.core.FiniteAnimationSpec
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.ColorScheme
@@ -68,7 +66,7 @@ fun NyampyTheme(
     // The wallpaper seed accents re-theme with the picture; the flow seeds itself on first
     // read, so the palette is ready wherever the theme is first composed.
     val monetHues by WallpaperPalette.hues(context).collectAsStateWithLifecycle()
-    val motion = scaledMotionScheme(settings.slowAnimations)
+    val motion = MotionScheme.expressive()
     // Only the rainbow accent runs the clock; every other accent leaves it at rest.
     val rainbowHue = if (settings.accent == Accent.RAINBOW) rainbowHue() else 0f
     val colorScheme = themeColorScheme(settings, monetHues, rainbowHue, darkTheme, context)
@@ -346,71 +344,4 @@ private fun ColorScheme.withSeed(argb: Int): ColorScheme {
         onSurfaceVariant = readable(seeded.onSurfaceVariant, seeded.surfaceVariant),
     )
 
-}
-
-/**
- * The expressive MD3 motion scheme, optionally slowed: off is the untouched built-in scheme,
- * on rebuilds the same springs with halved stiffness, stretching every animated component
- * app-wide.
- */
-private fun scaledMotionScheme(slow: Boolean): MotionScheme =
-    if (!slow) {
-        MotionScheme.expressive()
-    } else {
-        ScaledExpressiveMotionScheme(0.5f)
-    }
-
-/**
- * Expressive motion token values (material3's internal ExpressiveMotionTokens, v0_103),
- * replicated here because the tokens themselves are not public API.
- */
-private class ScaledExpressiveMotionScheme(private val factor: Float) : MotionScheme {
-    private val defaultSpatialSpec = spring<Any>(
-        dampingRatio = 0.8f,
-        stiffness = 380f * factor,
-    )
-    private val fastSpatialSpec = spring<Any>(
-        dampingRatio = 0.6f,
-        stiffness = 800f * factor,
-    )
-    private val slowSpatialSpec = spring<Any>(
-        dampingRatio = 0.8f,
-        stiffness = 200f * factor,
-    )
-    private val defaultEffectsSpec = spring<Any>(
-        dampingRatio = 1f,
-        stiffness = 1600f * factor,
-    )
-    private val fastEffectsSpec = spring<Any>(
-        dampingRatio = 1f,
-        stiffness = 3800f * factor,
-    )
-    private val slowEffectsSpec = spring<Any>(
-        dampingRatio = 1f,
-        stiffness = 800f * factor,
-    )
-
-    @Suppress("UNCHECKED_CAST")
-    override fun <T> defaultSpatialSpec(): FiniteAnimationSpec<T> =
-        defaultSpatialSpec as FiniteAnimationSpec<T>
-
-    @Suppress("UNCHECKED_CAST")
-    override fun <T> fastSpatialSpec(): FiniteAnimationSpec<T> =
-        fastSpatialSpec as FiniteAnimationSpec<T>
-
-    @Suppress("UNCHECKED_CAST")
-    override fun <T> slowSpatialSpec(): FiniteAnimationSpec<T> =
-        slowSpatialSpec as FiniteAnimationSpec<T>
-
-    @Suppress("UNCHECKED_CAST")
-    override fun <T> defaultEffectsSpec(): FiniteAnimationSpec<T> =
-        defaultEffectsSpec as FiniteAnimationSpec<T>
-
-    @Suppress("UNCHECKED_CAST")
-    override fun <T> fastEffectsSpec(): FiniteAnimationSpec<T> =
-        fastEffectsSpec as FiniteAnimationSpec<T>
-
-    @Suppress("UNCHECKED_CAST")
-    override fun <T> slowEffectsSpec(): FiniteAnimationSpec<T> =
-        slowEffectsSpec as FiniteAnimationSpec<T>
 }

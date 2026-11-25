@@ -135,10 +135,8 @@
     <string name="settings_accent_custom">Custom</string>
     <string name="settings_accent_custom_title">Custom color</string>
     <string name="settings_accent_custom_pick">Pick</string>
-    <string name="settings_slow_animations">Slow animations</string>
-    <string name="settings_slow_animations_hint">Springs get softer, everything moves slower</string>
-    <string name="settings_simple_transitions">Simple transitions</string>
-    <string name="settings_simple_transitions_hint">Better for weaker devices</string>
+    <string name="settings_legacy_animations">Old animations</string>
+    <string name="settings_legacy_animations_hint">Page switches the way 1.0.25 had them: the strip carries across every screen</string>
     <string name="settings_haptic_feedback">Haptic feedback</string>
     <string name="settings_haptic_feedback_hint">A light poke when the buttons are tapped</string>
     <string name="settings_mask_addresses">Mask addresses</string>

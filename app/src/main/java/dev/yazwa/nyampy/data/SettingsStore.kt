@@ -1,7 +1,6 @@
 package dev.yazwa.nyampy.data
 
 import androidx.core.content.edit
-import android.app.ActivityManager
 import android.content.Context
 import org.json.JSONObject
 import java.io.File
@@ -93,12 +92,12 @@ enum class Accent(val hue: Float) {
 data class UiSettings(
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val accent: Accent = Accent.ADAPTIVE,
-    val slowAnimations: Boolean = false,
     /**
-     * Whether page switches take the simple slide-up instead of the expressive strip
-     * scroll. Weak devices get it out of the box; everyone else starts expressive.
+     * Whether page switches play the way 1.0.25 had them — the strip carrying across every
+     * screen between the two, on the old emphasized decelerate — instead of the single
+     * sheet MeowX turns. Off by default: the sheet is the app's own way now.
      */
-    val simpleTransitions: Boolean = false,
+    val legacyAnimations: Boolean = false,
     /**
      * Whether the wallpaper picture drains to grayscale while the tunnel is down: only the
      * picture loses its color — the interface over it keeps the accent — and the color
@@ -305,13 +304,7 @@ object SettingsStore {
         val settings = UiSettings(
             themeMode = enumEntry(prefs.getString(KEY_THEME, null), ThemeMode.SYSTEM),
             accent = enumEntry(prefs.getString(KEY_ACCENT, null), Accent.ADAPTIVE),
-            // The speed setting used to be a three-way enum; a stored SLOW carries over.
-            slowAnimations = if (prefs.contains(KEY_SLOW)) {
-                prefs.getBoolean(KEY_SLOW, false)
-            } else {
-                prefs.getString(KEY_SPEED, null) == "SLOW"
-            },
-            simpleTransitions = prefs.getBoolean(KEY_SIMPLE_TRANSITIONS, isWeakDevice(context)),
+            legacyAnimations = prefs.getBoolean(KEY_LEGACY_ANIMATIONS, false),
             grayscaleOffline = prefs.getBoolean(KEY_GRAYSCALE_OFFLINE, false),
             hapticFeedback = prefs.getBoolean(KEY_HAPTIC, true),
             maskAddresses = prefs.getBoolean(KEY_MASK_ADDRESSES, false),
@@ -389,10 +382,11 @@ object SettingsStore {
     private fun write(context: Context, settings: UiSettings) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit { putString(KEY_THEME, settings.themeMode.name)
             .putString(KEY_ACCENT, settings.accent.name)
-            .putBoolean(KEY_SLOW, settings.slowAnimations)
+            .putBoolean(KEY_LEGACY_ANIMATIONS, settings.legacyAnimations)
+            .remove(KEY_SLOW)
             .remove(KEY_SPEED)
             .remove(KEY_EXPRESSIVE_TRANSITIONS)
-            .putBoolean(KEY_SIMPLE_TRANSITIONS, settings.simpleTransitions)
+            .remove(KEY_SIMPLE_TRANSITIONS)
             .putBoolean(KEY_GRAYSCALE_OFFLINE, settings.grayscaleOffline)
             .putBoolean(KEY_HAPTIC, settings.hapticFeedback)
             .putBoolean(KEY_MASK_ADDRESSES, settings.maskAddresses)
@@ -444,29 +438,20 @@ object SettingsStore {
     private inline fun <reified T : Enum<T>> enumEntry(name: String?, default: T): T =
         name?.let { stored -> enumValues<T>().firstOrNull { it.name == stored } } ?: default
 
-    /**
-     * Whether the device is weak enough that the strip's continuous scroll would
-     * stutter: the cutoff rides on RAM — the phones that never got past 4 GB
-     * (an 821-class one) can't carry it, while anything an 855 shipped in starts
-     * at 6.
-     */
-    private fun isWeakDevice(context: Context): Boolean {
-        val info = ActivityManager.MemoryInfo()
-        context.getSystemService(ActivityManager::class.java).getMemoryInfo(info)
-        return info.totalMem < 6L * 1024 * 1024 * 1024
-    }
-
     private const val KEY_THEME = "theme_mode"
     private const val KEY_ACCENT = "accent"
-    private const val KEY_SLOW = "slow_animations"
+    private const val KEY_LEGACY_ANIMATIONS = "legacy_animations"
 
-    /** Legacy key of the old three-way animation speed enum, read once for the migration. */
+    /** Legacy key of the slow-motion toggle the old-animations one replaced; dropped on the next write. */
+    private const val KEY_SLOW = "slow_animations"
+    /** Legacy key of the old three-way animation speed enum, dropped on the next write. */
     private const val KEY_SPEED = "animation_speed"
     /** Legacy key of the expressive-transitions toggle the simple one replaced; dropped on the next write. */
     private const val KEY_EXPRESSIVE_TRANSITIONS = "expressive_transitions"
+    /** Legacy key of the simple-transitions toggle, gone with the setting; dropped on the next write. */
+    private const val KEY_SIMPLE_TRANSITIONS = "simple_transitions"
     private const val KEY_GRAYSCALE_OFFLINE = "grayscale_offline"
     private const val KEY_HAPTIC = "haptic_feedback"
-    private const val KEY_SIMPLE_TRANSITIONS = "simple_transitions"
     private const val KEY_MASK_ADDRESSES = "mask_addresses"
     private const val KEY_NOTIFICATIONS_ASKED = "notifications_permission_asked"
 

@@ -136,10 +136,8 @@
     <string name="settings_accent_custom">Свой</string>
     <string name="settings_accent_custom_title">Свой цвет</string>
     <string name="settings_accent_custom_pick">Выбрать</string>
-    <string name="settings_slow_animations">Медленные анимации</string>
-    <string name="settings_slow_animations_hint">Движения становятся плавнее, слегка пружинее</string>
-    <string name="settings_simple_transitions">Простые переходы</string>
-    <string name="settings_simple_transitions_hint">Лучше для слабых устройств</string>
+    <string name="settings_legacy_animations">Старые анимации</string>
+    <string name="settings_legacy_animations_hint">Переходы как в 1.0.25: лента едет через все экраны</string>
     <string name="settings_haptic_feedback">Виброотклик</string>
     <string name="settings_haptic_feedback_hint">Лёгкий отклик на нажатия</string>
     <string name="settings_mask_addresses">Скрывать адреса</string>

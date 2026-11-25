@@ -17,20 +17,18 @@ import dev.yazwa.nyampy.ui.theme.LocalUiSettings
  *    velocity and a jelly settle.
  * The bounce is keyed to [taps] — the click counter — rather than to the press state: on a
  * quick tap the press state can flip up and down between recompositions and never be
- * observed at all, which used to leave short taps with no animation. Both springs halve
- * their stiffness together with the slow-animations setting.
+ * observed at all, which used to leave short taps with no animation. Both springs keep one stiffness: there is no slow-motion mode any more.
  */
 @Composable
 fun Modifier.pressBounce(pressed: Boolean, taps: Int): Modifier {
-    val slow = LocalUiSettings.current.slowAnimations
     val scale = remember { Animatable(1f) }
-    LaunchedEffect(pressed, slow) {
+    LaunchedEffect(pressed) {
         if (pressed) {
             scale.animateTo(
                 targetValue = PRESS_SCALE,
                 animationSpec = spring(
                     dampingRatio = 0.75f,
-                    stiffness = if (slow) 1500f else 3000f,
+                    stiffness = 3000f,
                 ),
             )
         } else if (scale.value < 1f) {
@@ -41,25 +39,25 @@ fun Modifier.pressBounce(pressed: Boolean, taps: Int): Modifier {
                 targetValue = 1f,
                 animationSpec = spring(
                     dampingRatio = 1f,
-                    stiffness = if (slow) 500f else 1000f,
+                    stiffness = 1000f,
                 ),
             )
         }
     }
-    LaunchedEffect(taps, slow) {
+    LaunchedEffect(taps) {
         if (taps == 0) return@LaunchedEffect
         scale.animateTo(
             targetValue = PRESS_SCALE,
             animationSpec = spring(
                 dampingRatio = 0.75f,
-                stiffness = if (slow) 1500f else 3000f,
+                stiffness = 3000f,
             ),
         )
         scale.animateTo(
             targetValue = 1f,
             animationSpec = spring(
                 dampingRatio = 0.5f,
-                stiffness = if (slow) 260f else 520f,
+                stiffness = 520f,
             ),
             initialVelocity = POP_VELOCITY,
         )

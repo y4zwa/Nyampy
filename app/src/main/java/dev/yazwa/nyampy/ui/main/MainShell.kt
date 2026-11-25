@@ -56,6 +56,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
@@ -73,14 +74,18 @@ import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlin.math.abs
+import kotlin.math.round
 import kotlin.math.roundToInt
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -129,30 +134,74 @@ private val LocalControllerPageReady = androidx.compose.runtime.compositionLocal
 private val LocalControllerBarVisible = androidx.compose.runtime.compositionLocalOf { false }
 
 /**
- * The page switch's own spatial motion: the same emphasized tween as [pageSettleSpec].
+ * A page turn's beat: `Curves.easeOut` — Flutter's curve from Bettbox (the open parent of
+ * MeowX), whose `kTabScrollDuration` is 300 ms. Pulled in to 240: at the original length the
+ * turn read as a leisurely glide rather than a tap's answer, and the curve carries the whole
+ * feel anyway.
+ */
+private const val PageTurnMillis = 240
+private val PageTurnEasing = CubicBezierEasing(0f, 0f, 0.58f, 1f)
+
+/**
+ * The page switch's own spatial motion: the same tween as [pageSettleSpec].
  *
  * The expressive scheme's default spatial spring overshoots by design — on a pressed
  * control that reads as life, but on a whole page sliding in the overshoot is a visible
  * bounce back that looks like the animation stalling.
  */
 private val pageSlideSpec = tween<IntOffset>(
+    durationMillis = PageTurnMillis,
+    easing = PageTurnEasing,
+)
+
+/**
+ * The strip's settle and the flying page's travel — the tab-turn of the app MeowX's pages
+ * were taken from (Bettbox, `lib/pages/home.dart`: `kTabScrollDuration` with
+ * `Curves.easeOut`).
+ *
+ * Not a spring on purpose: `Animatable` stops a spring at its visibility threshold (0.01
+ * of a page — about ten pixels), so the last stretch of the travel used to land as a
+ * separate little step after the animation looked finished.
+ *
+ * Not the emphasized decelerate the rest of the shell wears, either. That curve covers
+ * about 98% of the distance by four fifths of its time and then crawls the last couple of
+ * percent — on a whole page that is a visible stall a hand's width short of the slot, the
+ * page appearing to stick and then nudge itself in. `easeOut` starts at full speed and
+ * keeps moving until it lands: at four fifths of the time it is still three quarters of a
+ * hundred pixels out and reaches the slot in motion.
+ */
+private val pageSettleSpec = tween<Float>(
+    durationMillis = PageTurnMillis,
+    easing = PageTurnEasing,
+)
+
+/**
+ * The turn 1.0.25 played, kept for the "Old animations" setting: 340 ms on the emphasized
+ * decelerate, with the strip carrying across every screen between the two.
+ */
+private val legacyPageSettleSpec = tween<Float>(
     durationMillis = 340,
     easing = CubicBezierEasing(0.2f, 0f, 0f, 1f),
 )
 
 /**
- * The strip's settle and the flying page's travel.
+ * The wallpaper's look away from Home — the zoom and the blur — moving on the page's own
+ * beat: the same curve, the same duration, so the ride and the backdrop arrive together
+ * instead of chasing each other.
  *
- * Not a spring on purpose: `Animatable` stops a spring at its visibility threshold (0.01
- * of a page — about ten pixels), so the last stretch of the travel used to land as a
- * separate little step after the animation looked finished. A tween with the emphasized
- * decelerate curve reaches the slot exactly, slows to a stop instead of cutting off, and
- * never overshoots.
+ * Deliberately not the spatial spring the rest of the shell wears. On a full-screen blur
+ * the spring's overshoot runs the radius past the target and pulls it back, and on screen
+ * that reads as the picture pulsing under a page that had already stopped moving.
  */
-private val pageSettleSpec = tween<Float>(
-    durationMillis = 340,
-    easing = CubicBezierEasing(0.2f, 0f, 0f, 1f),
+private val wallpaperZoomSpec = tween<Float>(
+    durationMillis = PageTurnMillis,
+    easing = PageTurnEasing,
 )
+private val wallpaperBlurSpec = tween<Dp>(
+    durationMillis = PageTurnMillis,
+    easing = PageTurnEasing,
+)
+
 private val LocalControllerFocusExit = androidx.compose.runtime.compositionLocalOf<() -> Boolean> { { false } }
 
 @Composable
@@ -258,7 +307,7 @@ fun MainShell(viewModel: MainViewModel) {
             grantFocus(if (settingsOpen) categoryFocusRequester else tabFocusRequester)
         } else {
             val target = if (settingsOpen) MainTab.entries.size + selectedCategory.ordinal else selectedTab.ordinal
-            pageReady.first { it == (target to (settings.simpleTransitions || controller)) }
+            pageReady.first { it == (target to controller) }
             grantFocus(pageEntranceRequester)
         }
     }
@@ -324,6 +373,13 @@ fun MainShell(viewModel: MainViewModel) {
         // rides out to.
         val arrivalReach = wallpaperZoomTarget(0f) - 1f
         val zoomed = !homeLook && settings.wallpaperPageZoom
+        // The old animations ride the expressive springs again, as 1.0.25 did; the app's own
+        // turn keeps the wallpaper on the page's beat. Typed through AnimationSpec: the two
+        // branches are different spec kinds (tween vs spring).
+        val zoomSpec: androidx.compose.animation.core.AnimationSpec<Float> =
+            if (settings.legacyAnimations) motion.defaultSpatialSpec() else wallpaperZoomSpec
+        val blurSpec: androidx.compose.animation.core.AnimationSpec<Dp> =
+            if (settings.legacyAnimations) motion.defaultSpatialSpec() else wallpaperBlurSpec
         // The user's own pinch-zoom rides under the page zoom: the base look carries it
         // alone, the away-from-Home look multiplies it in.
         val scale = animateFloatAsState(
@@ -332,12 +388,12 @@ fun MainShell(viewModel: MainViewModel) {
             } else {
                 settings.wallpaperUserScale
             },
-            animationSpec = motion.defaultSpatialSpec(),
+            animationSpec = zoomSpec,
             label = "wallpaper zoom",
         )
         val blur = animateDpAsState(
             targetValue = if (homeLook) 0.dp else MAX_WALLPAPER_BLUR * settings.wallpaperBlur,
-            animationSpec = motion.defaultSpatialSpec(),
+            animationSpec = blurSpec,
             label = "wallpaper blur",
         )
         val scrim = scrimColor(settings.wallpaperDimTone)
@@ -398,7 +454,7 @@ fun MainShell(viewModel: MainViewModel) {
                 pageReady.value = position to mode
                 val target = if (focusDestination.settings) MainTab.entries.size + focusDestination.category.ordinal
                     else focusDestination.tab.ordinal
-                if (!focusDestination.bar && position == target && mode == (settings.simpleTransitions || controller)) {
+                if (!focusDestination.bar && position == target && mode == controller) {
                     grantFocus(pageEntranceRequester)
                 }
             },
@@ -1132,7 +1188,7 @@ private fun MainPagerStrip(
     onDisconnect: () -> Unit,
 ) {
     val controller = LocalInputMode.current == InputMode.CONTROLLER
-    val directTransitions = uiSettings.simpleTransitions || controller
+    val directTransitions = controller
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val pageWidth = constraints.maxWidth.toFloat()
         val settingsOffset = MainTab.entries.size
@@ -1157,22 +1213,102 @@ private fun MainPagerStrip(
             settingsOffset - 1
         }
 
-        // The strip's position between pages: an animation while the finger is up, the
-        // finger's own while it drags. [dragPosition] stands in for the animation for as
-        // long as the drag lasts; on release the strip is handed back already where the
-        // finger left it and settles the rest of the way to the landing page.
-        val stripPosition = remember { Animatable(targetPosition.toFloat()) }
-        var dragPosition by remember { mutableFloatStateOf(Float.NaN) }
+        // The turn: one sheet at a time. [turnFrom] is the page at rest in the pane,
+        // [turnTo] the page arriving behind it, [turnDir] the way it travels (0 at rest) and
+        // [turn] how far it has come, 0..1. A jump past the neighbor — Home to the settings,
+        // four pages away — puts the destination straight into the neighbor's slot, so it
+        // still slides exactly one sheet and nothing in between flickers past. That is the
+        // tab turn of MeowX/Bettbox (a PageView whose neighbor is swapped for the target).
+        var turnFrom by remember { mutableIntStateOf(targetPosition) }
+        var turnTo by remember { mutableIntStateOf(targetPosition) }
+        var turnDir by remember { mutableIntStateOf(0) }
+        // A plain state, not an Animatable: the finger hands the sheet back to the animation
+        // at the exact travel it let go of, and a suspend snap would leave one frame in
+        // between with the sheet back at zero.
+        var turn by remember { mutableFloatStateOf(0f) }
+        var turnJob by remember { mutableStateOf<Job?>(null) }
+        // The finger's own share of the turn while it drags — NaN when it doesn't, and the
+        // pair follows the finger instead of the animation until the release hands it back.
+        var dragFraction by remember { mutableFloatStateOf(Float.NaN) }
+        // The finger's travel so far, in pages, signed, clamped to one: a swipe carries a
+        // sheet, not the strip.
+        var dragTravel by remember { mutableFloatStateOf(0f) }
         // The slot of the page a direct-mode swipe is carrying out, MIN when none: the
         // dragged page alone translates by the drag — every other page stands still.
         var draggedSlot by remember { mutableIntStateOf(Int.MIN_VALUE) }
+        // The direct mode's own travel, in strip positions; it never rides the sheet pair.
+        var dragPosition by remember { mutableFloatStateOf(Float.NaN) }
         // The running drag-following animation, if any: the fly-out after a committed
         // release or the spring home after a failed one. A fresh drag cancels it — the
         // finger takes the page over from wherever the animation has got it.
         var dragAnimJob by remember { mutableStateOf<Job?>(null) }
-        LaunchedEffect(targetPosition, directTransitions) {
-            if (directTransitions) stripPosition.snapTo(targetPosition.toFloat())
-            else stripPosition.animateTo(targetPosition.toFloat(), pageSettleSpec)
+
+        /** The page standing in the pane right now, mid-turn or at rest. */
+        fun restingPage(): Int =
+            if (turnDir == 0) turnFrom
+            else if ((if (dragFraction.isNaN()) turn else dragFraction) < 0.5f) turnFrom
+            else turnTo
+
+        // The destination as a state the turn's flow can watch: [targetPosition] is a plain
+        // value computed here, and a flow over a captured value never ticks twice.
+        val destinationNow = rememberUpdatedState(targetPosition)
+
+        // Which turn the app plays: its own single sheet, or — with the "Old animations"
+        // setting — 1.0.25's strip carrying across every screen on the old decelerate.
+        val legacyTurn = uiSettings.legacyAnimations
+        val turnSpec = if (legacyTurn) legacyPageSettleSpec else pageSettleSpec
+
+        LaunchedEffect(directTransitions) {
+            if (directTransitions) {
+                // The direct mode swaps screens; there is no strip to keep in step.
+                turnJob?.cancel()
+                turnDir = 0
+                turnFrom = targetPosition
+                turnTo = targetPosition
+                turn = 0f
+                return@LaunchedEffect
+            }
+            // One sheet at a time, in order. A tap that lands while a sheet is riding takes
+            // its place in line instead of swapping its page into the sheet already on the
+            // way in — the swap made the destination appear where the other page had got to,
+            // a jump with no turn of its own. The one exception is a tap back to the page the
+            // turn left from: there the pair changes places and the travel carries on from
+            // the very point it stood at, so the sheet heads back without a seam.
+            //
+            // The flow reads a state, not the local [targetPosition]: the local is a plain
+            // value captured at composition, and a snapshotFlow over it would emit once and
+            // never see another tap — the pages would stand still for good.
+            snapshotFlow { destinationNow.value }.conflate().collect { target ->
+                if (target == turnTo && turnDir != 0) return@collect
+                if (target == turnFrom && turnDir == 0) return@collect
+                if (turnDir != 0 && target == turnFrom) {
+                    turnJob?.cancel()
+                    val travelled = if (dragFraction.isNaN()) turn else dragFraction
+                    dragFraction = Float.NaN
+                    val leaving = turnTo
+                    turnFrom = leaving
+                    turnTo = target
+                    turnDir = -turnDir
+                    turn = 1f - travelled
+                } else {
+                    // The sheet in flight lands first, then the destination gets a turn of
+                    // its own — from the pane's edge, the way every turn starts.
+                    turnJob?.join()
+                    if (target == turnFrom) return@collect
+                    turnTo = target
+                    turnDir = if (target > turnFrom) 1 else -1
+                    turn = 0f
+                }
+                turnJob?.cancel()
+                turnJob = launch {
+                    animate(initialValue = turn, targetValue = 1f, animationSpec = turnSpec) { value, _ ->
+                        turn = value
+                    }
+                    turnFrom = turnTo
+                    turnDir = 0
+                    turn = 0f
+                }
+            }
         }
 
         // The screen at a strip position: main tabs at 0..2, settings categories after them.
@@ -1298,78 +1434,82 @@ private fun MainPagerStrip(
         // failed swipe does.
         PredictiveBackHandler(enabled = backTarget != null) { progress ->
             val landing = backTarget ?: return@PredictiveBackHandler
-            // The gesture takes the strip over exactly the way a drag does: whatever
-            // the released page was still doing stops, the drag states take the page
-            // in hand.
+            val expressive = expressiveNow.value
+            if (expressive) {
+                // The gesture takes the turn over exactly the way a drag does: whatever the
+                // released sheet was still doing stops, the landing page becomes the sheet
+                // coming in — one sheet, however far the pages are apart.
+                turnJob?.cancel()
+                dragAnimJob = null
+                val from = restingPage()
+                turnFrom = from
+                turnTo = landing
+                turnDir = if (landing > from) 1 else -1
+                try {
+                    progress.collect { event -> dragFraction = event.progress }
+                } catch (e: CancellationException) {
+                    // Abandoned: the sheet walks itself back where the finger left it.
+                    val held = if (dragFraction.isNaN()) 0f else dragFraction
+                    dragFraction = Float.NaN
+                    turn = held
+                    turnJob = scope.launch {
+                        animate(initialValue = turn, targetValue = 0f, animationSpec = turnSpec) { value, _ -> turn = value }
+                        turnDir = 0
+                        turn = 0f
+                    }
+                    throw e
+                }
+                // Carried all the way: the landing takes over from under the finger.
+                val held = if (dragFraction.isNaN()) 0f else dragFraction
+                dragFraction = Float.NaN
+                turn = held
+                turnJob = scope.launch {
+                    animate(initialValue = turn, targetValue = 1f, animationSpec = turnSpec) { value, _ -> turn = value }
+                    turnFrom = turnTo
+                    turnDir = 0
+                    turn = 0f
+                    onSelectPage(landing)
+                }
+                return@PredictiveBackHandler
+            }
+            // The direct mode: the page carries its own one-page reach — its heavy swipe
+            // never previews the landing, and neither does the back's.
             dragAnimJob?.cancel()
             dragAnimJob = null
             draggedSlot = targetPosition
-            val expressive = expressiveNow.value
-            val from = if (expressive) stripPosition.value else targetPosition.toFloat()
+            val from = targetPosition.toFloat()
             try {
                 progress.collect { event ->
-                    // Expressive: the strip rides its own rail the whole way to the
-                    // landing. Direct: the page carries its own one-page reach — the
-                    // mode's heavy swipe never previews the landing, and neither does
-                    // the back's.
-                    dragPosition = if (expressive) {
-                        from + (landing - from) * event.progress
-                    } else {
-                        from - event.progress
-                    }
+                    dragPosition = from - event.progress
                 }
-                // Carried all the way: the landing takes over from under the finger.
                 val hand = if (dragPosition.isNaN()) from else dragPosition
-                if (expressive) {
-                    scope.launch {
-                        stripPosition.snapTo(hand)
-                        stripPosition.animateTo(
-                            landing.toFloat(),
-                            pageSettleSpec,
-                        )
+                val out = (draggedSlot - 1).toFloat()
+                if (hand > out) {
+                    dragAnimJob = scope.launch {
+                        animate(
+                            initialValue = hand,
+                            targetValue = out,
+                            animationSpec = pageSettleSpec,
+                        ) { value, _ ->
+                            dragPosition = value
+                        }
+                        // If the page's own disposal has already cleaned the states
+                        // behind its fade, our writes since were invisible — drop
+                        // them here too. Otherwise the fade's disposal still owns
+                        // them.
+                        if (draggedSlot == Int.MIN_VALUE) dragPosition = Float.NaN
                     }
+                } else {
+                    // The finger already carried the page fully out — nothing
+                    // left to fly.
                     dragPosition = Float.NaN
                     draggedSlot = Int.MIN_VALUE
-                } else {
-                    val out = (draggedSlot - 1).toFloat()
-                    if (hand > out) {
-                        dragAnimJob = scope.launch {
-                            animate(
-                                initialValue = hand,
-                                targetValue = out,
-                                animationSpec = pageSettleSpec,
-                            ) { value, _ ->
-                                dragPosition = value
-                            }
-                            // If the page's own disposal has already cleaned the states
-                            // behind its fade, our writes since were invisible — drop
-                            // them here too. Otherwise the fade's disposal still owns
-                            // them.
-                            if (draggedSlot == Int.MIN_VALUE) dragPosition = Float.NaN
-                        }
-                    } else {
-                        // The finger already carried the page fully out — nothing
-                        // left to fly.
-                        dragPosition = Float.NaN
-                        draggedSlot = Int.MIN_VALUE
-                    }
                 }
                 onSelectPage(landing)
             } catch (e: CancellationException) {
-                // Abandoned: the strip walks itself home the way a failed swipe does.
+                // Abandoned: the page walks itself home the way a failed swipe does.
                 if (dragPosition.isNaN()) {
                     // The gesture left before showing anything — nothing to walk home.
-                    draggedSlot = Int.MIN_VALUE
-                } else if (expressive) {
-                    val hand = dragPosition
-                    scope.launch {
-                        stripPosition.snapTo(hand)
-                        stripPosition.animateTo(
-                            targetPosition.toFloat(),
-                            pageSettleSpec,
-                        )
-                    }
-                    dragPosition = Float.NaN
                     draggedSlot = Int.MIN_VALUE
                 } else {
                     val hand = dragPosition
@@ -1389,12 +1529,34 @@ private fun MainPagerStrip(
             }
         }
         val dragState = rememberDraggableState { delta ->
-            // A positive delta: the finger moves right, the strip travels toward the
-            // previous page. Both modes move the same coordinate; in the direct mode it
-            // only feeds the settle (the release handler), the pages themselves wait for
-            // the landing's own animation.
-            dragPosition = (dragPosition - delta / pageWidth)
-                .coerceIn(firstPageNow.value.toFloat(), lastPageNow.value.toFloat())
+            if (expressiveNow.value) {
+                // One sheet per swipe: the travel clamps at a page, and a wall of the
+                // corridor simply doesn't give — the paper stops, it never overstretches.
+                dragTravel = (dragTravel - delta / pageWidth).coerceIn(-1f, 1f)
+                // A rightward travel (negative here, as in the old travel coordinate) is the
+                // finger heading for the previous page — that sheet comes in from the left.
+                val dir = when {
+                    dragTravel < 0f -> -1
+                    dragTravel > 0f -> 1
+                    else -> 0
+                }
+                val next = turnFrom + dir
+                if (dir != 0 && next !in firstPageNow.value..lastPageNow.value) {
+                    dragTravel = 0f
+                    dragFraction = 0f
+                    turnDir = 0
+                } else {
+                    turnDir = dir
+                    if (dir != 0) turnTo = next
+                    dragFraction = abs(dragTravel)
+                }
+            } else {
+                // A positive delta: the finger moves right, the strip travels toward the
+                // previous page. The direct mode only feeds its settle here; the pages
+                // themselves wait for the landing's own animation.
+                dragPosition = (dragPosition - delta / pageWidth)
+                    .coerceIn(firstPageNow.value.toFloat(), lastPageNow.value.toFloat())
+            }
         }
         Box(
             modifier = Modifier
@@ -1412,40 +1574,70 @@ private fun MainPagerStrip(
                         // springing home — stops here: the finger takes it over.
                         dragAnimJob?.cancel()
                         dragAnimJob = null
-                        when {
-                            // Mid-return spring: the finger takes the page over from
-                            // wherever it has got to.
-                            draggedSlot == targetPosition && !dragPosition.isNaN() -> {}
-                            // Expressive continuity: wherever the strip's settle stands.
-                            expressiveNow.value -> dragPosition = stripPosition.value
-                            else -> dragPosition = targetPosition.toFloat()
+                        if (expressiveNow.value) {
+                            // The sheet in the pane stands where the turn has got it: the
+                            // finger takes over from the nearer of the pair.
+                            turnJob?.cancel()
+                            val page = restingPage()
+                            turnFrom = page
+                            turnTo = page
+                            turnDir = 0
+                            turn = 0f
+                            dragTravel = 0f
+                            dragFraction = 0f
+                        } else {
+                            when {
+                                // Mid-return spring: the finger takes the page over from
+                                // wherever it has got to.
+                                draggedSlot == targetPosition && !dragPosition.isNaN() -> {}
+                                else -> dragPosition = targetPosition.toFloat()
+                            }
+                            draggedSlot = targetPosition
                         }
-                        draggedSlot = targetPosition
                     },
                     onDragStopped = { velocity ->
                         // A quick flick outstrips any position: it carries a full page.
                         val fling = abs(velocity) > pageWidth * 0.8f
                         if (expressiveNow.value) {
-                            val landing = (
-                                if (fling) {
-                                    // Leftward velocity (negative) throws to the next page.
-                                    dragPosition.roundToInt() + if (velocity < 0) 1 else -1
-                                } else {
-                                    dragPosition.roundToInt()
-                                }
-                                ).coerceIn(firstPageNow.value, lastPageNow.value)
-                            // The settle starts from under the finger, wherever it is.
-                            val from = dragPosition
-                            scope.launch {
-                                stripPosition.snapTo(from)
-                                stripPosition.animateTo(
-                                    landing.toFloat(),
-                                    pageSettleSpec,
-                                )
+                            val held = if (dragFraction.isNaN()) 0f else dragFraction
+                            val flingLeft = velocity < -pageWidth * 0.8f
+                            val flingRight = velocity > pageWidth * 0.8f
+                            val landing = when {
+                                // No travel yet: a flick alone still carries the sheet.
+                                turnDir == 0 ->
+                                    if (fling) {
+                                        (turnFrom + if (flingLeft) 1 else -1)
+                                            .coerceIn(firstPageNow.value, lastPageNow.value)
+                                    } else {
+                                        turnFrom
+                                    }
+                                (turnDir > 0 && flingLeft) || (turnDir < 0 && flingRight) ->
+                                    turnTo.coerceIn(firstPageNow.value, lastPageNow.value)
+                                (turnDir > 0 && flingRight) || (turnDir < 0 && flingLeft) -> turnFrom
+                                held > DirectSwipeCommitFraction ->
+                                    turnTo.coerceIn(firstPageNow.value, lastPageNow.value)
+                                else -> turnFrom
                             }
-                            dragPosition = Float.NaN
-                            draggedSlot = Int.MIN_VALUE
-                            if (landing != targetPosition) onSelectPage(landing)
+                            dragFraction = Float.NaN
+                            dragTravel = 0f
+                            turn = held
+                            dragAnimJob = scope.launch {
+                                if (landing == turnFrom) {
+                                    // Short of the commit: the sheet walks back.
+                                    animate(initialValue = held, targetValue = 0f, animationSpec = turnSpec) { value, _ -> turn = value }
+                                    turnDir = 0
+                                    turn = 0f
+                                } else {
+                                    turnFrom = restingPage()
+                                    turnTo = landing
+                                    turnDir = if (landing > turnFrom) 1 else -1
+                                    animate(initialValue = held, targetValue = 1f, animationSpec = turnSpec) { value, _ -> turn = value }
+                                    turnFrom = turnTo
+                                    turnDir = 0
+                                    turn = 0f
+                                    if (landing != targetPosition) onSelectPage(landing)
+                                }
+                            }
                         } else {
                             // The heavy page: flung or carried a quarter of the way, the
                             // landing takes over — the dragged page flies out the rest of
@@ -1527,7 +1719,7 @@ private fun MainPagerStrip(
                         transitionSpec = {
                             (fadeIn(if (controller) motion.fastEffectsSpec() else motion.defaultEffectsSpec()) +
                                 slideInVertically(if (controller) motion.fastSpatialSpec() else pageSlideSpec) {
-                                    if (controller && uiSettings.simpleTransitions) 0 else if (controller) it / 12 else it / 3
+                                    if (controller) it / 12 else it / 3
                                 }) togetherWith fadeOut(motion.fastEffectsSpec())
                         },
                         label = "direct page switch",
@@ -1572,39 +1764,70 @@ private fun MainPagerStrip(
                         }
                     }
                 } else {
-                    // The default — expressive transitions: one continuous strip, scrolled
-                    // to the target — and by the finger while it drags (the corridor above).
+                    // The default — expressive transitions: one sheet at a time, the page
+                    // leaving the pane and the page arriving behind it. A jump past the
+                    // neighbor (Home to the settings, four pages away) puts the destination
+                    // straight into the neighbor's slot, so it is still one sheet, and the
+                    // pages in between never cross the glass. That is the tab turn of
+                    // MeowX/Bettbox: a PageView whose neighbor is swapped for the target.
+                    // With the "Old animations" setting the camera instead rides the whole
+                    // distance on 1.0.25's decelerate, pages between and all.
                     val pageCount = settingsOffset + SettingsCategory.entries.size
-                    // Which pages are near enough to show: derived, so the strip recomposes
-                    // only when a page enters or leaves — the per-frame slide itself is read
-                    // inside each page's layer.
-                    val nearPages by remember {
-                        derivedStateOf {
-                            val position =
-                                if (dragPosition.isNaN()) stripPosition.value else dragPosition
-                            (0 until pageCount).filter { abs(it - position) < 1.5f }
+                    // The pages that need a body: the sheet in the pane, the sheet arriving
+                    // behind it, and the two the finger could drag in beside it. Everything
+                    // else is a live screen — the stats page ticks, the settings pages murmur
+                    // — and a body that keeps ticking off the pane draws through the whole
+                    // window around the clock, for nobody. Disposing them keeps the idle
+                    // screen idle; they come back when a turn or a swipe needs them. The old
+                    // strip keeps 1.0.25's rule instead: a page lives while it is within a
+                    // page of the camera, which is what the sweep needs and no more.
+                    val composedPages = if (legacyTurn) {
+                        val pagesAround by remember {
+                            derivedStateOf {
+                                val camera = turnFrom + (turnTo - turnFrom) *
+                                    (if (dragFraction.isNaN()) turn else dragFraction)
+                                val near = round(camera).toInt()
+                                (0 until pageCount).filter { abs(it - near) <= 1 }.toSet()
+                            }
+                        }
+                        pagesAround
+                    } else buildSet {
+                        add(turnFrom)
+                        add(turnTo)
+                        if (turnFrom - 1 >= 0) add(turnFrom - 1)
+                        if (turnFrom + 1 < pageCount) add(turnFrom + 1)
+                    }
+                    // A page out of the turn keeps to its own side of the pane, far enough
+                    // that it never draws into it.
+                    fun parkedSlot(position: Int): Float = if (position < turnFrom) -2f else 2f
+                    // A page's place, in page widths from the pane's left edge, this very
+                    // frame: the pair rides, everything else stands two widths off the pane.
+                    // Read inside each page's layer, so the travel is a layer update per
+                    // frame and no recomposition at all. With the old strip the camera is
+                    // the whole layout: every page sits at its own slot from it.
+                    fun pageOffset(position: Int): Float {
+                        val travelled = if (dragFraction.isNaN()) turn else dragFraction
+                        if (legacyTurn) {
+                            // 1.0.25's strip: the camera rides the whole distance, so every
+                            // page between the two crosses the pane on the way.
+                            return position - (turnFrom + (turnTo - turnFrom) * travelled)
+                        }
+                        val dir = turnDir
+                        if (dir == 0) return if (position == turnFrom) 0f else parkedSlot(position)
+                        return when (position) {
+                            turnTo -> dir * (1f - travelled)
+                            turnFrom -> -dir * travelled
+                            else -> parkedSlot(position)
                         }
                     }
-                    // The strip's travel is a long spring or the finger's own drag — either
-                    // way the system won't clock it on its own (the scroll rides a
-                    // graphicsLayer, invisible to it), so the display is asked for its high
-                    // gear while the position is anywhere off its page or still held.
-                    val targetPositionState = rememberUpdatedState(targetPosition)
-                    val stripBusy by remember {
-                        derivedStateOf {
-                            !dragPosition.isNaN() ||
-                                stripPosition.value != targetPositionState.value.toFloat()
-                        }
-                    }
-                    RefreshRateRequest(active = stripBusy)
-                    nearPages.forEach { position ->
-                        // Keyed so a page keeps its state as neighbors come and go around it.
+                    val turning = turnDir != 0 || !dragFraction.isNaN()
+                    RefreshRateRequest(active = turning)
+                    for (position in 0 until pageCount) {
+                        if (position !in composedPages) continue
+                        // Keyed so a page keeps its state while the ones around it warm.
                         key(position) {
                             Page(
-                                position = position,
-                                animatedPosition = {
-                                    if (dragPosition.isNaN()) stripPosition.value else dragPosition
-                                },
+                                offset = { pageOffset(position) },
                                 pageWidth = pageWidth,
                             ) {
                                 destinationPage(position, simple == directTransitions)
@@ -1619,15 +1842,15 @@ private fun MainPagerStrip(
 
 @Composable
 private fun Page(
-    position: Int,
-    animatedPosition: () -> Float,
+    /** The page's place, in page widths, read at draw time: the travel never recomposes. */
+    offset: () -> Float,
     pageWidth: Float,
     content: @Composable () -> Unit,
 ) {
     Box(
         Modifier
             .fillMaxSize()
-            .graphicsLayer { translationX = (position - animatedPosition()) * pageWidth },
+            .graphicsLayer { translationX = offset() * pageWidth },
     ) {
         content()
     }

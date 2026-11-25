@@ -73,7 +73,6 @@ fun WavyPullToRefreshBox(
     val hapticsOn = LocalUiSettings.current.hapticFeedback
     val deniedKicks = rememberHapticDeniedKicks()
     val thresholdPoke = rememberHapticSoftPoke()
-    val slow = LocalUiSettings.current.slowAnimations
     val density = LocalDensity.current
     val isRefreshingState = rememberUpdatedState(isRefreshing && !controller)
 
@@ -116,7 +115,7 @@ fun WavyPullToRefreshBox(
                         targetValue = px,
                         animationSpec = spring(
                             dampingRatio = PULL_RELEASE_DAMPING,
-                            stiffness = if (slow) PULL_RELEASE_STIFFNESS / 2f else PULL_RELEASE_STIFFNESS,
+                            stiffness = PULL_RELEASE_STIFFNESS,
                         ),
                     )
                 }

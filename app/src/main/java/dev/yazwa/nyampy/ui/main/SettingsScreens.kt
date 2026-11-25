@@ -349,32 +349,17 @@ fun InterfaceScreen(
             SettingsGroup(
                 {
                     ToggleRow(
-                        title = stringResource(R.string.settings_slow_animations),
-                        supporting = stringResource(R.string.settings_slow_animations_hint),
-                        // The speedometer with a 2 while on (every animation takes twice as
-                        // long), the plain one while off: normal or slow, nothing faster.
-                        icon = if (settings.slowAnimations) {
-                            R.drawable.ic_speed_2
+                        title = stringResource(R.string.settings_legacy_animations),
+                        supporting = stringResource(R.string.settings_legacy_animations_hint),
+                        // A dial turned back for the old transitions, a fresh one for the
+                        // sheet the app turns now.
+                        icon = if (settings.legacyAnimations) {
+                            R.drawable.ic_history
                         } else {
-                            R.drawable.ic_speed_normal
+                            R.drawable.ic_renew
                         },
-                        checked = settings.slowAnimations,
-                        onChange = { checked -> onChange { it.copy(slowAnimations = checked) } },
-                    )
-                },
-                {
-                    ToggleRow(
-                        title = stringResource(R.string.settings_simple_transitions),
-                        supporting = stringResource(R.string.settings_simple_transitions_hint),
-                        // Fade circle for the simple switch, sliding arrows while the
-                        // carousel strip is on.
-                        icon = if (settings.simpleTransitions) {
-                            R.drawable.ic_opacity
-                        } else {
-                            R.drawable.ic_swap_horizontal
-                        },
-                        checked = settings.simpleTransitions,
-                        onChange = { checked -> onChange { it.copy(simpleTransitions = checked) } },
+                        checked = settings.legacyAnimations,
+                        onChange = { checked -> onChange { it.copy(legacyAnimations = checked) } },
                     )
                 },
             )

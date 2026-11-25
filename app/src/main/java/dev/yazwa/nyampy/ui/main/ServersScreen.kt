@@ -2693,42 +2693,24 @@ private fun ServerRow(
                         // the rows trade their numbers one by one as the sweep answers
                         // each of them. A balancer wears no number: its member of the
                         // moment is the live tunnel's own delay, which Home's chip reads.
-                        // Under simple transitions the number just takes its seat: the
-                        // hand-over rides a full transition per row, a price the weak
-                        // devices the mode is for pay on every page open, for an
-                        // animation they asked to shed.
-                        run {
-                            if (LocalUiSettings.current.simpleTransitions) {
-                                if (hasPingResult) {
-                                    Text(
-                                        text = "  ·  " + (displayedDelay?.let {
-                                            stringResource(R.string.servers_ping_ms, it.toInt())
-                                        } ?: stringResource(R.string.servers_offline)),
-                                        color = extraColor,
-                                        maxLines = 1,
-                                    )
-                                }
-                            } else {
-                                AnimatedContent(
-                                    targetState = displayedDelay to hasPingResult,
-                                    transitionSpec = {
-                                        (fadeIn(motion.defaultEffectsSpec()) +
-                                            slideInHorizontally(motion.defaultSpatialSpec()) { it / 2 }) togetherWith
-                                            fadeOut(motion.defaultEffectsSpec())
-                                    },
-                                    label = "ping",
-                                ) { (delay, show) ->
-                                    if (show) {
-                                        val text = delay?.let {
-                                            stringResource(R.string.servers_ping_ms, it.toInt())
-                                        } ?: stringResource(R.string.servers_offline)
-                                        Text(
-                                            text = "  ·  $text",
-                                            color = extraColor,
-                                            maxLines = 1,
-                                        )
-                                    }
-                                }
+                        AnimatedContent(
+                            targetState = displayedDelay to hasPingResult,
+                            transitionSpec = {
+                                (fadeIn(motion.defaultEffectsSpec()) +
+                                    slideInHorizontally(motion.defaultSpatialSpec()) { it / 2 }) togetherWith
+                                    fadeOut(motion.defaultEffectsSpec())
+                            },
+                            label = "ping",
+                        ) { (delay, show) ->
+                            if (show) {
+                                val text = delay?.let {
+                                    stringResource(R.string.servers_ping_ms, it.toInt())
+                                } ?: stringResource(R.string.servers_offline)
+                                Text(
+                                    text = "  ·  $text",
+                                    color = extraColor,
+                                    maxLines = 1,
+                                )
                             }
                         }
                     }

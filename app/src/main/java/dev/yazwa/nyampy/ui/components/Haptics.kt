@@ -43,6 +43,40 @@ fun rememberHapticPoke(): () -> Unit {
 }
 
 /**
+ * A tap's answer in the device's own voice: the platform's tuned UI tick (EFFECT_TICK, or
+ * the view's CLOCK_TICK where effects aren't there) instead of the raw one-shot buzz. The
+ * motors on Samsungs and Pixels render these from a small shaped envelope — a crisp,
+ * short tick — while a bare 15 ms pulse on the same motor reads as a dull buzz.
+ *
+ * [firm] is the heavier cut for a button that does something bigger than a tab: the gear,
+ * the back arrow. Off where the effect family is missing, the constants step up the same way.
+ */
+@Composable
+fun rememberHapticTick(firm: Boolean = false): () -> Unit {
+    val view = LocalView.current
+    val vibrator = LocalContext.current.getSystemService(Vibrator::class.java)
+    val enabled = LocalUiSettings.current.hapticFeedback
+    val scope = rememberCoroutineScope()
+    return remember(view, vibrator, enabled, firm) {
+        {
+            if (enabled) {
+                val effect = if (firm) VibrationEffect.EFFECT_CLICK else VibrationEffect.EFFECT_TICK
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && vibrator?.hasVibrator() == true) {
+                    scope.launch(Dispatchers.Default) {
+                        runCatching { vibrator.vibrate(VibrationEffect.createPredefined(effect)) }
+                    }
+                } else {
+                    view.performHapticFeedback(
+                        if (firm) HapticFeedbackConstants.CONTEXT_CLICK
+                        else HapticFeedbackConstants.CLOCK_TICK,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
  * A softer poke — the pull-to-refresh threshold's "you're past the line": the same brief
  * pulse as a tap at a quarter of the amplitude. Devices with a good haptic motor (Pixels)
  * read the full-amplitude poke as a heavy thump there, where the gesture only wants a

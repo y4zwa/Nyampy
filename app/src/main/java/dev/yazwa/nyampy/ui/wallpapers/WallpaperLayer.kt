@@ -8,6 +8,7 @@ import android.graphics.Matrix
 import androidx.exifinterface.media.ExifInterface
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.collectAsState
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -18,9 +19,12 @@ import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
@@ -31,6 +35,7 @@ import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.TileMode
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
@@ -228,65 +233,88 @@ internal fun WallpaperBackdrop(
 ) {
     val image = wallpaper.image
     val gif = rememberGifWallpaper(wallpaper)
+    // A blurred picture is rasterized at half the pane's resolution and stretched back up:
+    // a blur is soft by definition, so the coarser raster shows nowhere, and the effect has
+    // a quarter of the pixels to run over on every frame of its radius animation — the
+    // single most expensive thing a page switch does. The sharp look Home wears keeps the
+    // full resolution; the trick switches as the radius leaves zero, which is the very
+    // moment the blur itself makes the change invisible.
+    val blurNow = rememberUpdatedState(blur)
+    val coarse by remember { derivedStateOf { blurNow.value() > 0.dp } }
     Box(modifier) {
-        // The picture is drawn by hand at its true rect — the crop's cover factor with the
-        // page zoom and the user's zoom multiplied in, centered, then slid by the pan —
-        // and this node is the crop window. The content moves inside the window, so a pan
-        // pulls real pixels into view; scaling the node's own painting instead would slide
-        // a screen-shaped snapshot over emptiness, the picture's off-screen part gone.
+        // The pane's own box while the picture is stretched back up: the layer scales the
+        // half-sized raster drawn below, and nothing else in here changes with it.
         Box(
             Modifier
                 .matchParentSize()
-                // Modifier.blur's rectangle recipe — clamped edges, clipped to the bounds —
-                // set from inside the layer block so the radius may animate without
-                // recomposition.
                 .graphicsLayer {
-                    val radius = blur().toPx()
-                    renderEffect = if (radius > 0f) BlurEffect(radius, radius, TileMode.Clamp) else null
-                    clip = true
-                }
-                .drawBehind {
-                    val scale = scale()
-                    val offsetX = offsetX()
-                    val offsetY = offsetY()
-                    val desaturate = desaturate()
-                    val crop = maxOf(size.width / image.width, size.height / image.height)
-                    val w = image.width * crop * scale
-                    val h = image.height * crop * scale
-                    // The pan, normalized to the slack the scaled picture leaves on each
-                    // axis and clamped to it: at or above the cover the picture never
-                    // uncovers the window's sides; below it — the whole-picture zoom-out —
-                    // there is no slack, the picture sits centered in its letterbox.
-                    val slackX = (w - size.width) / 2f
-                    val slackY = (h - size.height) / 2f
-                    val tx = if (slackX > 0f) (offsetX * slackX).coerceIn(-slackX, slackX) else 0f
-                    val ty = if (slackY > 0f) (offsetY * slackY).coerceIn(-slackY, slackY) else 0f
-                    // The offline grayscale lives on the picture alone: the theme's colors
-                    // and everything drawn over it keep theirs, so the drain is a filter on
-                    // this very draw, not a scheme change.
-                    val origin = IntOffset(
-                        ((size.width - w) / 2f + tx).roundToInt(),
-                        ((size.height - h) / 2f + ty).roundToInt(),
-                    )
-                    val dimensions = IntSize(w.roundToInt(), h.roundToInt())
-                    if (gif != null) {
-                        with(gif) { drawFrame(origin, dimensions, desaturate) }
-                    } else {
-                        val grayscale = if (desaturate > 0.001f) {
-                            ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(1f - desaturate) })
-                        } else {
-                            null
-                        }
-                        drawImage(
-                            image = image,
-                            dstOffset = origin,
-                            dstSize = dimensions,
-                            colorFilter = grayscale,
-                            filterQuality = FilterQuality.High,
-                        )
+                    if (coarse) {
+                        scaleX = 2f
+                        scaleY = 2f
+                        transformOrigin = TransformOrigin(0f, 0f)
                     }
                 },
-        )
+        ) {
+            // The picture is drawn by hand at its true rect — the crop's cover factor with
+            // the page zoom and the user's zoom multiplied in, centered, then slid by the
+            // pan — and this node is the crop window. The content moves inside the window,
+            // so a pan pulls real pixels into view; scaling the node's own painting instead
+            // would slide a screen-shaped snapshot over emptiness, the picture's off-screen
+            // part gone.
+            Box(
+                Modifier
+                    .fillMaxSize(if (coarse) 0.5f else 1f)
+                    // Modifier.blur's rectangle recipe — clamped edges, clipped to the bounds
+                    // — set from inside the layer block so the radius may animate without
+                    // recomposition.
+                    .graphicsLayer {
+                        val radius = blur().toPx() * if (coarse) 0.5f else 1f
+                        renderEffect = if (radius > 0f) BlurEffect(radius, radius, TileMode.Clamp) else null
+                        clip = true
+                    }
+                    .drawBehind {
+                        val scale = scale()
+                        val offsetX = offsetX()
+                        val offsetY = offsetY()
+                        val desaturate = desaturate()
+                        val crop = maxOf(size.width / image.width, size.height / image.height)
+                        val w = image.width * crop * scale
+                        val h = image.height * crop * scale
+                        // The pan, normalized to the slack the scaled picture leaves on each
+                        // axis and clamped to it: at or above the cover the picture never
+                        // uncovers the window's sides; below it — the whole-picture zoom-out
+                        // — there is no slack, the picture sits centered in its letterbox.
+                        val slackX = (w - size.width) / 2f
+                        val slackY = (h - size.height) / 2f
+                        val tx = if (slackX > 0f) (offsetX * slackX).coerceIn(-slackX, slackX) else 0f
+                        val ty = if (slackY > 0f) (offsetY * slackY).coerceIn(-slackY, slackY) else 0f
+                        // The offline grayscale lives on the picture alone: the theme's
+                        // colors and everything drawn over it keep theirs, so the drain is a
+                        // filter on this very draw, not a scheme change.
+                        val origin = IntOffset(
+                            ((size.width - w) / 2f + tx).roundToInt(),
+                            ((size.height - h) / 2f + ty).roundToInt(),
+                        )
+                        val dimensions = IntSize(w.roundToInt(), h.roundToInt())
+                        if (gif != null) {
+                            with(gif) { drawFrame(origin, dimensions, desaturate) }
+                        } else {
+                            val grayscale = if (desaturate > 0.001f) {
+                                ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(1f - desaturate) })
+                            } else {
+                                null
+                            }
+                            drawImage(
+                                image = image,
+                                dstOffset = origin,
+                                dstSize = dimensions,
+                                colorFilter = grayscale,
+                                filterQuality = FilterQuality.High,
+                            )
+                        }
+                    },
+            )
+        }
         Box(
             Modifier
                 .matchParentSize()

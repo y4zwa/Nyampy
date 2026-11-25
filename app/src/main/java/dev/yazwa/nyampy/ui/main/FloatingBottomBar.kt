@@ -9,6 +9,7 @@ import androidx.compose.animation.Crossfade
 import androidx.compose.animation.EnterExitState
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.FiniteAnimationSpec
 import androidx.compose.animation.core.animateDpAsState
@@ -58,6 +59,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
@@ -98,10 +100,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import dev.yazwa.nyampy.R
 import dev.yazwa.nyampy.ui.components.focusRing
+import dev.yazwa.nyampy.ui.components.rememberHapticTick
 import dev.yazwa.nyampy.ui.theme.LocalUiSettings
 import dev.yazwa.nyampy.ui.theme.backdropScheme
 import dev.yazwa.nyampy.ui.wallpapers.LocalBarCanFade
@@ -135,7 +141,25 @@ private val LocalBarTint = staticCompositionLocalOf<() -> Float> { { 1f } }
 private val LocalBarLift = staticCompositionLocalOf<() -> Float> { { 0f } }
 
 /** The lift's transition: slow enough to read as a shift, not a snap. */
+/** The bar lifts 500 ms behind the scroll it answers — a slow, calm move of its own. */
 private const val BAR_LIFT_MILLIS = 500
+
+/**
+ * Everything the bar does in answer to a tap moves on the page's own beat: 240 ms with
+ * Flutter's easeOut, the curve and length the pages themselves turn on (see
+ * `PageTurnMillis` in the shell).
+ *
+ * The expressive springs were the bar's own tempo and it fought the page: a label unfolding
+ * over half a second while the page had already landed, the tabs' pills still drifting
+ * under the finger that had long let go, the gear's morph wobbling after the settings
+ * screen was up. Beside a crisp page turn that read as the bar lagging behind the tap.
+ */
+private const val BAR_TURN_MILLIS = 240
+private val BarTurnEasing = CubicBezierEasing(0f, 0f, 0.58f, 1f)
+private val BarTurnFloat = tween<Float>(BAR_TURN_MILLIS, easing = BarTurnEasing)
+private val BarTurnDp = tween<Dp>(BAR_TURN_MILLIS, easing = BarTurnEasing)
+private val BarTurnOffset = tween<IntOffset>(BAR_TURN_MILLIS, easing = BarTurnEasing)
+private val BarTurnSize = tween<IntSize>(BAR_TURN_MILLIS, easing = BarTurnEasing)
 
 /** How far the selection indicator moves from its container role toward the accent at full lift. */
 private const val INDICATOR_LIFT = 0.2f
@@ -240,10 +264,10 @@ fun FloatingBottomBar(
                     targetState = settingsOpen,
                     transitionSpec = {
                         val direction = if (targetState) 1 else -1
-                        (slideInHorizontally(calm.defaultSpatialSpec()) { it * direction } +
+                        (slideInHorizontally(BarTurnOffset) { it * direction } +
                             fadeIn(calm.defaultEffectsSpec()))
                             .togetherWith(
-                                slideOutHorizontally(calm.defaultSpatialSpec()) { -it * direction } +
+                                slideOutHorizontally(BarTurnOffset) { -it * direction } +
                                     fadeOut(calm.defaultEffectsSpec()),
                             )
                             .using(null)
@@ -329,16 +353,22 @@ private fun FloatingMainBar(
                 .navigationBarsPadding()
                 .padding(horizontal = floatingBarMargin(), vertical = BarVerticalPadding)
                 // The bar's whole footprint — the gaps between the pills included — belongs to
-                // the bar: a press there is consumed here instead of falling through to the
-                // page beneath. The pills still win their own touches: children see the events
-                // first, so this only eats what lands on the empty stretches — and the eating
-                // itself runs in the final pass, after everyone's main-pass handling, so no
-                // device's particular event stream can find a tap half-processed here.
+                // the bar: a press there must not fall through to the page beneath. A pointer
+                // input node alone is enough for that — the hit test stops at this node — so
+                // the gesture is only followed here, never consumed.
+                //
+                // Consuming is what used to break the bar. Compose's tap detectors give up on
+                // a gesture whose event was consumed in the final pass, and this loop used to
+                // eat every event there for the sake of the gaps. On a phone the finger
+                // always sends a move or two before the lift, so the detector cancelled on
+                // one of those moves almost every real press — the pills then ran on the
+                // greedy safety net alone, which misses every second gesture (see
+                // [pressProofTap]).
                 .pointerInput(Unit) {
                     awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false)
                         while (true) {
                             val event = awaitPointerEvent(PointerEventPass.Final)
-                            event.changes.forEach { it.consume() }
                             if (event.changes.none { it.pressed }) break
                         }
                     }
@@ -439,14 +469,14 @@ fun <T : PillDestination> SubScreenBottomBar(
         modifier = modifier
             .navigationBarsPadding()
             .padding(horizontal = floatingBarMargin(), vertical = BarVerticalPadding)
-            // The whole footprint belongs to the bar, as on the main one — and the eating
-            // runs in the final pass there too, after every main-pass handler has had
-            // its own look.
+            // The whole footprint belongs to the bar, as on the main one — and here too the
+            // node is only a wall for the touches to stop at: consuming them would cancel
+            // the detectors of the buttons inside (see the main bar).
             .pointerInput(Unit) {
                 awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
                     while (true) {
                         val event = awaitPointerEvent(PointerEventPass.Final)
-                        event.changes.forEach { it.consume() }
                         if (event.changes.none { it.pressed }) break
                     }
                 }
@@ -635,11 +665,11 @@ fun Modifier.recordBehindBar(layer: GraphicsLayer, on: Boolean): Modifier =
         this
     }
 
-/** Contents shrink/grow with a spring while the container follows their size. */
+/** Contents shrink/grow on the page's beat while the container follows their size. */
 private fun AnimatedContentTransitionScope<Boolean>.morph(motion: MotionScheme): ContentTransform =
-    (fadeIn(motion.defaultEffectsSpec()) + scaleIn(motion.defaultSpatialSpec(), initialScale = 0.6f))
-        .togetherWith(fadeOut(motion.fastEffectsSpec()) + scaleOut(motion.fastSpatialSpec(), targetScale = 0.6f))
-        .using(SizeTransform(clip = true) { _, _ -> motion.defaultSpatialSpec() })
+    (fadeIn(motion.defaultEffectsSpec()) + scaleIn(BarTurnFloat, initialScale = 0.6f))
+        .togetherWith(fadeOut(motion.fastEffectsSpec()) + scaleOut(BarTurnFloat, targetScale = 0.6f))
+        .using(SizeTransform(clip = true) { _, _ -> BarTurnSize })
 
 /**
  * The bar's paint, shared by both bar styles: a [floating] pill with its soft shadow, or
@@ -714,7 +744,7 @@ private fun BarSurface(
     )
     val frostBlur = animateDpAsState(
         targetValue = if (home || !frostOn) 0.dp else NavFrostBlur * intensity,
-        animationSpec = motion.defaultSpatialSpec(),
+        animationSpec = BarTurnDp,
         label = "bar frost blur",
     )
     // The pill's window in the root — where the recorded content lives — tracked so the
@@ -908,20 +938,32 @@ private fun greedyTap(onClick: () -> Unit): GreedyTap {
 }
 
 @Composable
-private fun Modifier.pressProofTap(tap: GreedyTap): Modifier =
-    pointerInput(Unit) {
+private fun Modifier.pressProofTap(tap: GreedyTap): Modifier {
+    // The net's verdict waits its turn on the shell's own loop: the button's detector runs
+    // inside this very input dispatch, later than this node, so checking here would always
+    // find the books still open and land a second click on every healthy tap.
+    val scope = rememberCoroutineScope()
+    return pointerInput(Unit) {
         awaitEachGesture {
             awaitFirstDown(requireUnconsumed = false)
+            // The books open per gesture: what the previous tap's detector did says nothing
+            // about this one. Cleared at the end instead, they left the net disarmed for
+            // every tap that followed a normal one — the misses people felt as the bar
+            // simply not taking a press.
+            tap.handled = false
             // The fingers simply gone — any event with nothing pressed ends the wait,
             // a cancellation included: its changes report pressed=false like any lift.
             while (true) {
                 val event = awaitPointerEvent()
                 if (event.changes.none { it.pressed }) break
             }
-            if (!tap.handled) tap.onClick()
-            tap.handled = false
+            scope.launch {
+                delay(1)
+                if (!tap.handled) tap.onClick()
+            }
         }
     }
+}
 
 @Composable
 private fun RoundBarButton(
@@ -932,9 +974,11 @@ private fun RoundBarButton(
     iconModifier: Modifier = Modifier,
 ) {
     // No press ripple: the morph into the other shape is already the button's whole
-    // response — a ripple on top of it reads as a stutter.
+    // response - a ripple on top of it reads as a stutter. The poke is the press's answer.
     val interactionSource = remember { MutableInteractionSource() }
-    val tap = greedyTap(onClick)
+    val poke = rememberHapticTick(firm = true)
+    val act = { poke(); onClick() }
+    val tap = greedyTap(act)
     Box(
         modifier = modifier
             .size(BarHeight)
@@ -949,7 +993,7 @@ private fun RoundBarButton(
                 role = Role.Button,
                 onClick = {
                     tap.handled = true
-                    onClick()
+                    act()
                 },
             )
             .pressProofTap(tap),
@@ -973,11 +1017,10 @@ private fun <T : PillDestination> PillItems(
     focusRequester: FocusRequester? = null,
     labelBudget: Dp = Dp.Infinity,
 ) {
-    val motion = MaterialTheme.motionScheme
     val reveals = items.map { item ->
         animateFloatAsState(
             targetValue = if (item == selected) 1f else 0f,
-            animationSpec = motion.defaultSpatialSpec(),
+            animationSpec = BarTurnFloat,
             label = "tab label reveal",
         ).value.coerceIn(0f, 1f)
     }
@@ -1036,7 +1079,10 @@ private fun PillItem(
         animationSpec = motion.defaultEffectsSpec(),
         label = "item content",
     )
-    val tap = greedyTap(onClick)
+    // A tab gets the light tick; the gear and the back arrow, a firmer click.
+    val poke = rememberHapticTick()
+    val act = { poke(); onClick() }
+    val tap = greedyTap(act)
     Row(
         modifier = Modifier
             .height(ItemHeight)
@@ -1065,7 +1111,7 @@ private fun PillItem(
                 role = Role.Tab,
                 onClick = {
                     tap.handled = true
-                    onClick()
+                    act()
                 },
             )
             .pressProofTap(tap)
